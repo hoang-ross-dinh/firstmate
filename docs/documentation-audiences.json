@@ -634,6 +634,34 @@
       "audience": "operator-current"
     },
     {
+      "path": "openspec/changes/fleet-recap-board/design.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/specs/recap-board-actions/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/specs/recap-board-hosting/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/specs/recap-board-views/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/specs/recap-iteration-log/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/fleet-recap-board/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },

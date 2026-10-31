@@ -31,6 +31,6 @@
 
 ## 5. Replace the old board and verify
 
-- [ ] 5.1 Update `.agents/skills/bearings/SKILL.md` and the relevant docs so `/bearings lavish` publishes through the new command and the chat carries one line
-- [ ] 5.2 Confirm no new port, no `0.0.0.0` or `::` bind, and no tunnel appear in the change
-- [ ] 5.3 Run `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, and the bearings and procevent tests, and report the results
+- [x] 5.1 Update `.agents/skills/bearings/SKILL.md` and the relevant docs so `/bearings lavish` publishes through the new command and the chat carries one line
+- [x] 5.2 Confirm no new port, no `0.0.0.0` or `::` bind, and no tunnel appear in the change
+- [x] 5.3 Run `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, and the bearings and procevent tests, and report the results

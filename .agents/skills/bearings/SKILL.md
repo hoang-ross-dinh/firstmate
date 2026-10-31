@@ -89,6 +89,22 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
    After writing the file, return the concise four-section chat digest and include the report path or link without adding a fifth section.
    For a richer review surface, offer `/bearings lavish` when the report has enough structure to deserve one, but only after the required digest is ready.
 
+## Fleet Recap board
+
+`/bearings lavish` publishes the Fleet Recap board, a live ticket view of every backlog task, on the existing Lavish session.
+`bin/fm-recap-publish.sh` owns the iteration log, the revisions, and the board build; its header owns the `fm-recap.v1` input and the log contract.
+Compose `fm-recap.v1` from the same snapshot with the same ranking judgment as the chat digest.
+Give each task you want to label a one-line `summary`, an `emoji`, a short `theme` code, and the `reply_terms` the captain may answer with.
+Every field is optional and an omitted field keeps its last value.
+Run `bin/fm-recap-publish.sh publish <recap.json>` once per invocation.
+Each publish is one iteration.
+Chat then carries one line built from the printed `iteration`, `changed`, `waiting`, and `url` facts, never the digest sections.
+Never write the iteration log or read a backlog file yourself.
+A board comment arrives as an inbox note whose body starts with `[recap task=<key> iteration=<n>]`.
+Answer it with `bin/fm-inbox.sh reply <id> <text>` and then run `bin/fm-recap-publish.sh refresh`, which shows the reply without costing an iteration.
+Hold answers, `merge.<task-id>`, and `dispatch.charted` arrive as the board wake below and follow the same routing.
+The fm-bearings-board.v1 board below stays buildable until the captain accepts the Fleet Recap board.
+
 ## Lavish board mode
 
 `/bearings lavish` adds one deliverable beside the unchanged chat digest: the interactive fleet board, a myfirstmate-styled Lavish page where the captain answers Captain's Call items directly instead of replying in chat.
