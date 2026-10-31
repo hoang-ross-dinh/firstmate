@@ -309,6 +309,19 @@ seed_views_log() {  # <home>
   } > "$(log_of "$home")"
 }
 
+test_the_built_board_opens_in_explore_mode() {
+  local home board
+  home=$(make_home explore)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  [ "$(node -e '
+    const html = require("fs").readFileSync(process.argv[1], "utf8");
+    const tag = html.match(/<html\b[^>]*>/i);
+    process.stdout.write(tag && /\sdata-lavish-annotate="off"/.test(tag[0]) ? "off" : "missing");
+  ' "$board")" = off ] || fail "the built board's html element does not open in explore mode"
+  pass "the built board opens in explore mode"
+}
+
 test_the_iteration_view_groups_by_theme_and_marks_each_task() {
   local home board out
   home=$(make_home groups)
@@ -575,6 +588,7 @@ fm_test_run \
   test_the_log_lives_in_gitignored_data \
   test_an_invalid_recap_publishes_nothing \
   test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_line \
+  test_the_built_board_opens_in_explore_mode \
   test_the_iteration_view_groups_by_theme_and_marks_each_task \
   test_the_filters_narrow_the_iteration_view \
   test_the_captain_can_move_between_iterations \
