@@ -85,7 +85,16 @@
 # every `<` in the compact JSON as the \u003c string escape, so a payload string
 # containing "</script>" can never terminate the data block early.
 #
-# FM_BEARINGS_BOARD_TEMPLATE overrides the shipped template path (tests only).
+# THE FLEET RECAP PAYLOAD. build also accepts one fm-recap-board.v1 payload,
+# composed by bin/fm-recap-publish.sh, and injects it into the Fleet Recap
+# template at the same stable board path. It takes the same serve-first sequence
+# - session proof, reopen, bind, arm - so a publish reopens an ended session
+# exactly as a v1 build does. The Captain's Call hygiene above is a v1 concern:
+# a recap payload carries every task and its hold state, so nothing is dropped.
+# The fm-bearings-board.v1 path is unchanged.
+#
+# FM_BEARINGS_BOARD_TEMPLATE and FM_RECAP_BOARD_TEMPLATE override the shipped
+# template paths (tests only).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,6 +104,8 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/board-template.html}"
 PLACEHOLDER='__FM_BEARINGS_BOARD_DATA__'
 BOARD_SCHEMA=fm-bearings-board.v1
+RECAP_SCHEMA=fm-recap-board.v1
+RECAP_TEMPLATE="${FM_RECAP_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/recap-board-template.html}"
 
 usage() {
   awk '
@@ -201,6 +212,26 @@ validate_payload() {  # <data.json>
     and ([.underway[] | underway_item] | all)
     and ([.landed[] | landed_item] | all)
     and ([.charted[] | charted_item] | all)
+  ' "$1" >/dev/null
+}
+
+validate_recap_payload() {  # <data.json>
+  jq -e --arg schema "$RECAP_SCHEMA" '
+    def str: type == "string";
+    def revision: type == "object" and (.iter | type == "number") and (.state | str) and (.title | str);
+    def task:
+      type == "object" and (.key | str and length > 0) and (.id | str) and (.home | str)
+      and (.revisions | type == "array") and ([.revisions[] | revision] | all)
+      and (.older | type == "array") and ([.older[] | type == "object" and (.iter | type == "number") and (.line | str)] | all)
+      and (.comments | type == "array");
+    type == "object" and .schema == $schema
+    and (.home | str and length > 0) and (.generated | str and length > 0)
+    and (.iteration | type == "number") and (.window | type == "number")
+    and (.iterations | type == "array")
+    and ([.iterations[] | type == "object" and (.seq | type == "number") and (.tasks | type == "array")] | all)
+    and (.warnings | type == "array")
+    and ([.warnings[] | type == "object" and (.id | str) and (.title | str) and (.reason | str)] | all)
+    and (.tasks | type == "array") and ([.tasks[] | task] | all)
   ' "$1" >/dev/null
 }
 
@@ -358,19 +389,28 @@ await_source_owner() {  # <source-id>
 }
 
 command_build() {
-  local data=${1-} board json tmp sid extracted effective owner version pre_reopen_owner
+  local data=${1-} board json tmp sid extracted effective owner version pre_reopen_owner recap=0
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
   command -v jq >/dev/null 2>&1 || fail "jq is required"
   [ -f "$data" ] || fail "board data does not exist: $data"
   jq empty "$data" 2>/dev/null || fail "board data is not valid JSON: $data"
-  validate_payload "$data" || fail "board data does not satisfy $BOARD_SCHEMA: $data"
+  if [ "$(jq -r '.schema // ""' "$data")" = "$RECAP_SCHEMA" ]; then
+    recap=1
+    BOARD_SCHEMA=$RECAP_SCHEMA
+    TEMPLATE=$RECAP_TEMPLATE
+    validate_recap_payload "$data" || fail "board data does not satisfy $BOARD_SCHEMA: $data"
+  else
+    validate_payload "$data" || fail "board data does not satisfy $BOARD_SCHEMA: $data"
+  fi
   [ -f "$TEMPLATE" ] && [ ! -L "$TEMPLATE" ] || fail "board template is missing: $TEMPLATE"
   [ "$(grep -cxF "$PLACEHOLDER" "$TEMPLATE")" -eq 1 ] \
     || fail "board template does not carry exactly one data slot: $TEMPLATE"
 
   effective=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-bearings-payload.XXXXXX") \
     || fail "cannot stage the board payload"
-  if ! effective_payload "$data" "$effective"; then
+  if [ "$recap" -eq 1 ]; then
+    cp -- "$data" "$effective" || { rm -f -- "$effective"; fail "cannot stage the board payload"; }
+  elif ! effective_payload "$data" "$effective"; then
     rm -f -- "$effective"
     fail "cannot reconcile the board payload against landed work"
   fi

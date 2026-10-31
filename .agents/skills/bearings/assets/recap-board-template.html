@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fleet Recap board</title>
+<style>
+/* ============================================================
+   Bearings board - Firstmate Design System, inlined for portability.
+   Tokens copied verbatim from myfirstmate priv/static/assets/app.css
+   (the compiled adoption of .agents/skills/firstmate-design).
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Chango&family=Jost:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  --rust-700: #8f2f17; --rust-600: #a93a1f; --rust-500: #c0452a;
+  --rust-400: #d35f3f; --rust-300: #e08365; --rust-100: #f4d8c9; --rust-050: #fbece3;
+  --navy-700: #1a2238; --navy-600: #222c49; --navy-500: #2a3656;
+  --navy-300: #6c7796; --navy-100: #d9deea;
+  --gold-600: #b5791c; --gold-500: #e0a52e; --gold-300: #f0d38c; --gold-100: #f8ecc9;
+  --ocean-600: #2f6688; --ocean-500: #3c7ea6; --ocean-200: #b6d4e2; --ocean-050: #e8f1f5;
+  --sea-700: #234e3a; --sea-500: #2f6b4f; --sea-200: #b9d4c5; --sea-050: #e9f2ec;
+  --paper-000: #fbf4e2; --paper-100: #f6ecd3; --paper-200: #f0e3c4; --paper-300: #e7d6ae;
+  --cream-line: #ddc89c;
+  --ink-900: #241c14; --ink-700: #3f3224; --ink-500: #6f5e46; --ink-300: #9c8a6c;
+  --white: #fffdf7;
+  --bg-page: var(--paper-100);
+  --surface-card: var(--white);
+  --surface-card-warm: var(--paper-000);
+  --text-strong: var(--ink-900); --text-body: var(--ink-700);
+  --text-muted: var(--ink-500); --text-faint: var(--ink-300);
+  --border-default: var(--cream-line); --border-soft: var(--paper-300);
+  --status-online: var(--sea-500); --status-online-soft: var(--sea-050);
+  --status-warn: var(--gold-600); --status-warn-soft: var(--gold-100);
+  --status-danger: var(--rust-600); --status-danger-soft: var(--rust-050);
+  --status-info: var(--ocean-500); --status-info-soft: var(--ocean-050);
+  --font-display: "Chango", "Cooper Black", Rockwell, Georgia, serif;
+  --font-sans: "Jost", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-h3: 1.4rem; --fs-h4: 1.15rem; --fs-base: 1rem; --fs-sm: 0.9375rem;
+  --fs-xs: 0.8125rem; --fs-2xs: 0.6875rem;
+  --ls-caps: 0.16em;
+  --radius-xs: 6px; --radius-sm: 9px; --radius-md: 12px; --radius-banner: 7px;
+  --radius-lg: 18px; --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(36, 28, 20, 0.06), 0 4px 10px rgba(36, 28, 20, 0.06);
+  --shadow-hard: 4px 4px 0 var(--ink-900);
+  --shadow-hard-sm: 3px 3px 0 var(--ink-900);
+  --texture-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  --focus-ring: 0 0 0 3px var(--gold-300);
+  --container-app: 1180px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  color: var(--text-body);
+  background: var(--bg-page);
+  background-image: var(--texture-paper);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+/* ---- fm-badge (enamel sign-pin), verbatim contract ---- */
+.fm-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--fs-2xs); font-weight: 800; line-height: 1;
+  padding: 5px 9px 4px; text-transform: uppercase; letter-spacing: 0.07em;
+  border-radius: var(--radius-xs); border: 1.5px solid var(--ink-900);
+  box-shadow: 2px 2px 0 var(--ink-900); white-space: nowrap;
+}
+.fm-badge--online  { background: var(--sea-500);  color: var(--paper-000); }
+.fm-badge--warn    { background: var(--gold-500); color: var(--navy-700); }
+.fm-badge--danger  { background: var(--rust-600); color: var(--paper-000); }
+.fm-badge--info    { background: var(--ocean-500); color: var(--paper-000); }
+.fm-badge--neutral { background: var(--paper-000); color: var(--ink-900); }
+.fm-badge--solid   { background: var(--rust-500); color: var(--paper-000); }
+
+/* ---- fm-btn ---- */
+.fm-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font-sans); font-weight: 800; line-height: 1; white-space: nowrap;
+  border: 2px solid transparent; border-radius: var(--radius-banner); cursor: pointer;
+  text-decoration: none; transition: background 120ms, border-color 120ms, transform 120ms, box-shadow 120ms;
+}
+.fm-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.fm-btn:active { transform: translateY(1px); }
+.fm-btn--sm { font-size: var(--fs-xs); padding: 8px 16px; }
+.fm-btn--primary { background: var(--rust-500); color: var(--white); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
+.fm-btn--primary:hover { background: var(--rust-600); }
+.fm-btn--gold { background: var(--gold-500); color: var(--navy-700); border-color: var(--ink-900); box-shadow: var(--shadow-hard-sm); }
+.fm-btn--gold:hover { background: var(--gold-600); color: var(--white); }
+.fm-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- fm-card ---- */
+.fm-card {
+  background: var(--surface-card); border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden;
+}
+.fm-card--poster { border: 2px solid var(--ink-900); box-shadow: var(--shadow-hard); border-radius: var(--radius-md); }
+.fm-card--warm { background: var(--surface-card-warm); }
+
+/* ---- fm-sign (eyebrow section label) ---- */
+.fm-sign {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: var(--ls-caps); font-size: var(--fs-xs);
+  line-height: 1; white-space: nowrap;
+}
+.fm-sign--eyebrow { color: var(--rust-500); }
+.fm-sign--muted { color: var(--ink-500); }
+.fm-sign svg { width: 14px; height: 14px; }
+.fm-ico { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.18em; }
+
+/* ============================================================
+   Fleet Recap board (rb-*) - built on the same tokens
+   ============================================================ */
+.rb-nav {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--paper-100) 86%, transparent);
+  backdrop-filter: saturate(150%) blur(10px);
+  border-bottom: 1px solid var(--border-default);
+}
+.rb-nav__inner {
+  max-width: var(--container-app); margin: 0 auto; padding: 10px 28px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.rb-brand { font-family: var(--font-display); font-size: 23px; color: var(--text-strong); line-height: 1; }
+.rb-iter { display: inline-flex; align-items: center; gap: 10px; }
+.rb-iter__label { font-weight: 800; color: var(--text-strong); }
+.rb-iter__at { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
+.rb-main {
+  max-width: var(--container-app); margin: 0 auto;
+  padding: 22px 28px 72px; display: flex; flex-direction: column; gap: 20px;
+}
+.rb-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.rb-chip {
+  font-family: var(--font-sans); font-weight: 800; font-size: var(--fs-xs);
+  padding: 7px 14px; border-radius: var(--radius-pill); cursor: pointer;
+  border: 1.5px solid var(--ink-900); background: var(--paper-000); color: var(--ink-900);
+}
+.rb-chip.is-active { background: var(--ink-900); color: var(--paper-000); }
+.rb-group { display: flex; flex-direction: column; gap: 8px; }
+.rb-group__head { display: flex; align-items: baseline; gap: 10px; }
+.rb-group__code { font-family: var(--font-display); font-size: var(--fs-h4); color: var(--rust-500); }
+.rb-group__count { font-size: var(--fs-xs); color: var(--text-faint); font-weight: 700; }
+.rb-row {
+  display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: start;
+  padding: 12px 14px; cursor: pointer; text-align: left; width: 100%;
+  background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  font: inherit; color: inherit;
+}
+.rb-row:hover { border-color: var(--ink-900); }
+.rb-row__emoji { font-size: 1.2rem; line-height: 1.3; }
+.rb-row__title { font-weight: 700; color: var(--text-strong); }
+.rb-row__sub { font-size: var(--fs-sm); color: var(--text-muted); }
+.rb-row__mark { font-size: var(--fs-xs); color: var(--text-faint); font-family: var(--font-mono); }
+.rb-row__badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.rb-empty { color: var(--text-faint); padding: 18px 4px; }
+.rb-detail { display: flex; flex-direction: column; gap: 16px; }
+.rb-panel { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.rb-panel h3 { margin: 0; font-size: var(--fs-h4); color: var(--text-strong); }
+.rb-links { display: flex; gap: 12px; flex-wrap: wrap; font-size: var(--fs-sm); }
+.rb-links a { color: var(--ocean-600); text-decoration: underline; }
+.rb-opts { display: flex; flex-direction: column; gap: 6px; }
+.rb-opt { display: flex; gap: 8px; align-items: baseline; }
+.rb-field {
+  width: 100%; font: inherit; padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border-default); background: var(--white); color: var(--text-body);
+}
+.rb-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.rb-queued { color: var(--status-online); font-weight: 700; font-size: var(--fs-xs); }
+.rb-limit { color: var(--status-danger); font-size: var(--fs-xs); }
+.rb-rev { border-left: 3px solid var(--border-default); padding: 4px 0 4px 12px; display: flex; flex-direction: column; gap: 4px; }
+.rb-rev__head { font-weight: 800; color: var(--text-strong); }
+.rb-change { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-body); word-break: break-word; }
+.rb-old { color: var(--status-danger); text-decoration: line-through; }
+.rb-new { color: var(--status-online); }
+.rb-diff { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; margin: 4px 0; padding: 8px; background: var(--paper-000); border-radius: var(--radius-sm); }
+.rb-diff__add { color: var(--status-online); }
+.rb-diff__del { color: var(--status-danger); }
+.rb-older { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
+.rb-comment { border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); }
+.rb-reply { margin: 6px 0 0 16px; padding-left: 10px; border-left: 3px solid var(--sea-500); }
+.rb-warn { padding: 10px 14px; display: flex; gap: 12px; align-items: baseline; }
+</style>
+</head>
+
+<body>
+<header class="rb-nav"><div class="rb-nav__inner" id="rb-nav"></div></header>
+<main class="rb-main" id="rb-app"></main>
+
+<script id="bearings-data" type="application/json">
+__FM_BEARINGS_BOARD_DATA__
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var data = JSON.parse(document.getElementById("bearings-data").textContent);
+  var MAIN_HOME = "main";
+  var KEEP_FINISHED = 3;
+  var JIRA_BASE = "https://parcelperform.atlassian.net/browse/";
+  var COMMENT_LIMIT = 2000;
+  var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
+    "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
+    "hold_until", "close"];
+
+  var st = { iter: data.iteration, filter: "open", task: null };
+  var FILTERS = [["open", "Open"], ["changed", "Changed in this iteration"],
+    ["waiting", "Waiting on you"], ["all", "All"]];
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = text;
+    return n;
+  }
+  function badge(tone, text) { return el("span", "fm-badge fm-badge--" + tone, text); }
+  function clear(n) { n.textContent = ""; return n; }
+  function link(href, text) {
+    var a = el("a", "", text);
+    if (typeof href === "string" && href.indexOf("https://") === 0) {
+      a.setAttribute("href", href); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener");
+    }
+    return a;
+  }
+  function utf8Length(s) { return new TextEncoder().encode(s).length; }
+  function slug(s) { return String(s).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 128); }
+
+  /* ---- pure view model ------------------------------------------------ */
+
+  function entryFor(n) {
+    for (var i = 0; i < data.iterations.length; i++) if (data.iterations[i].seq === n) return data.iterations[i];
+    return null;
+  }
+  /* revisions are newest first; the first one at or before n is the task as of n */
+  function asOf(task, n) {
+    for (var i = 0; i < task.revisions.length; i++) if (task.revisions[i].iter <= n) return task.revisions[i];
+    return null;
+  }
+  function presentIn(task, n) {
+    var e = entryFor(n);
+    return !!e && e.tasks.indexOf(task.key) !== -1 && asOf(task, n) !== null;
+  }
+  /* the iteration a task became done, or null while it is not done */
+  function finishedIn(task, n) {
+    var fin = null, prev = null, i, r;
+    for (i = task.revisions.length - 1; i >= 0; i--) {
+      r = task.revisions[i];
+      if (r.iter > n) continue;
+      if (r.state === "done") { if (prev !== "done") fin = r.iter; } else { fin = null; }
+      prev = r.state;
+    }
+    return prev === "done" ? fin : null;
+  }
+  function hiddenIn(task, n) {
+    var fin = finishedIn(task, n);
+    return fin !== null && n - fin > KEEP_FINISHED;
+  }
+  function mark(rev, n) {
+    return rev.iter === n ? "new in this iteration" : "unchanged since iteration " + rev.iter;
+  }
+  function rowsFor(n, filter) {
+    var rows = [];
+    data.tasks.forEach(function (t) {
+      if (!presentIn(t, n)) return;
+      var rev = asOf(t, n);
+      var hidden = hiddenIn(t, n);
+      var keep = filter === "all" ||
+        (!hidden && (filter === "open" ||
+          (filter === "changed" && rev.iter === n) ||
+          (filter === "waiting" && rev.waiting === true)));
+      if (keep) rows.push({ task: t, rev: rev, hidden: hidden });
+    });
+    return rows;
+  }
+  function groupRows(rows) {
+    var by = {}, order = [];
+    rows.forEach(function (r) {
+      var code = r.rev.theme || "misc";
+      if (!by[code]) { by[code] = []; order.push(code); }
+      by[code].push(r);
+    });
+    order.sort(function (a, b) {
+      if (a === "misc") return 1;
+      if (b === "misc") return -1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    return order.map(function (code) {
+      by[code].sort(function (a, b) {
+        if (!!b.rev.waiting !== !!a.rev.waiting) return b.rev.waiting ? 1 : -1;
+        return a.rev.title < b.rev.title ? -1 : a.rev.title > b.rev.title ? 1 : 0;
+      });
+      return { theme: code, rows: by[code] };
+    });
+  }
+  function fieldText(v) {
+    if (v === undefined || v === null || v === "") return "(empty)";
+    return typeof v === "string" ? v : JSON.stringify(v);
+  }
+  function changedFields(newer, older) {
+    var out = [];
+    SHOWN.forEach(function (f) {
+      if (JSON.stringify(newer[f]) !== JSON.stringify(older[f])) out.push({ field: f, from: older[f], to: newer[f] });
+    });
+    return out;
+  }
+  /* line diff by longest common subsequence; bounded so a huge note stays cheap */
+  function lineDiff(a, b) {
+    var x = String(a || "").split("\n"), y = String(b || "").split("\n");
+    if (x.length * y.length > 160000) {
+      return x.map(function (s) { return { t: "-", s: s }; }).concat(y.map(function (s) { return { t: "+", s: s }; }));
+    }
+    var m = [], i, j;
+    for (i = 0; i <= x.length; i++) { m.push([]); for (j = 0; j <= y.length; j++) m[i].push(0); }
+    for (i = x.length - 1; i >= 0; i--) for (j = y.length - 1; j >= 0; j--)
+      m[i][j] = x[i] === y[j] ? m[i + 1][j + 1] + 1 : Math.max(m[i + 1][j], m[i][j + 1]);
+    var out = []; i = 0; j = 0;
+    while (i < x.length && j < y.length) {
+      if (x[i] === y[j]) { out.push({ t: " ", s: x[i] }); i++; j++; }
+      else if (m[i + 1][j] >= m[i][j + 1]) { out.push({ t: "-", s: x[i] }); i++; }
+      else { out.push({ t: "+", s: y[j] }); j++; }
+    }
+    while (i < x.length) { out.push({ t: "-", s: x[i++] }); }
+    while (j < y.length) { out.push({ t: "+", s: y[j++] }); }
+    return out;
+  }
+  function jiraKeys(text) {
+    var seen = {}, out = [], m, re = /\b[A-Z][A-Z0-9]{1,9}-[0-9]+\b/g;
+    while ((m = re.exec(text || "")) !== null) if (!seen[m[0]]) { seen[m[0]] = 1; out.push(m[0]); }
+    return out;
+  }
+
+  /* ---- queueing helpers (Lavish question markup) ----------------------- */
+
+  function queue(form, summary, text, ctx) {
+    if (window.lavish && window.lavish.queuePrompt) {
+      window.lavish.queuePrompt(summary, { tag: "choice", text: text, element: form, data: ctx });
+    }
+  }
+  function questionForm(key) {
+    var form = document.createElement("form");
+    form.setAttribute("data-lavish-question", key);
+    return form;
+  }
+  function footer(form, label, tone) {
+    var foot = el("div", "rb-actions");
+    var btn = el("button", "fm-btn fm-btn--sm fm-btn--" + tone, label);
+    btn.type = "submit";
+    foot.appendChild(btn);
+    var q = el("span", "rb-queued", "queued");
+    q.hidden = true;
+    foot.appendChild(q);
+    var lim = el("span", "rb-limit", "");
+    lim.setAttribute("role", "alert");
+    foot.appendChild(lim);
+    form.appendChild(foot);
+    return { queued: q, limit: lim };
+  }
+
+  /* ---- views ---------------------------------------------------------- */
+
+  var nav = document.getElementById("rb-nav");
+  var app = document.getElementById("rb-app");
+
+  function renderNav() {
+    clear(nav);
+    nav.appendChild(el("span", "rb-brand", "Fleet Recap"));
+    var it = el("div", "rb-iter");
+    var prev = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Previous");
+    prev.type = "button"; prev.setAttribute("data-nav", "prev");
+    var first = data.iterations.length ? data.iterations[0].seq : data.iteration;
+    prev.disabled = st.iter <= first;
+    prev.addEventListener("click", function () { st.iter = Math.max(first, st.iter - 1); render(); });
+    var next = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Next");
+    next.type = "button"; next.setAttribute("data-nav", "next");
+    next.disabled = st.iter >= data.iteration;
+    next.addEventListener("click", function () { st.iter = Math.min(data.iteration, st.iter + 1); render(); });
+    var e = entryFor(st.iter);
+    it.appendChild(prev);
+    it.appendChild(el("span", "rb-iter__label", "Iteration " + st.iter + " of " + data.iteration));
+    if (e && e.at) it.appendChild(el("span", "rb-iter__at", e.at));
+    it.appendChild(next);
+    nav.appendChild(it);
+  }
+
+  function renderWarnings(parent) {
+    if (!data.warnings.length) return;
+    var sec = el("section", "rb-group");
+    var head = el("div", "rb-group__head");
+    head.appendChild(el("span", "rb-group__code", "Fleet integrity"));
+    sec.appendChild(head);
+    data.warnings.forEach(function (w) {
+      var card = el("div", "fm-card rb-warn");
+      card.appendChild(badge("danger", "needs repair"));
+      var body = el("div", "");
+      body.appendChild(el("div", "rb-row__title", w.title));
+      if (w.reason) body.appendChild(el("div", "rb-row__sub", w.reason));
+      card.appendChild(body);
+      sec.appendChild(card);
+    });
+    parent.appendChild(sec);
+  }
+
+  function renderList() {
+    clear(app);
+    var chips = el("div", "rb-filters");
+    FILTERS.forEach(function (f) {
+      var count = rowsFor(st.iter, f[0]).length;
+      var chip = el("button", "rb-chip" + (st.filter === f[0] ? " is-active" : ""), f[1] + " (" + count + ")");
+      chip.type = "button"; chip.setAttribute("data-filter", f[0]);
+      chip.addEventListener("click", function () { st.filter = f[0]; render(); });
+      chips.appendChild(chip);
+    });
+    app.appendChild(chips);
+    var groups = groupRows(rowsFor(st.iter, st.filter));
+    if (!groups.length) app.appendChild(el("div", "rb-empty", "No tasks match this filter."));
+    groups.forEach(function (g) {
+      var sec = el("section", "rb-group");
+      var head = el("div", "rb-group__head");
+      head.appendChild(el("span", "rb-group__code", g.theme));
+      head.appendChild(el("span", "rb-group__count", String(g.rows.length)));
+      sec.appendChild(head);
+      g.rows.forEach(function (r) { sec.appendChild(taskRow(r)); });
+      app.appendChild(sec);
+    });
+    renderWarnings(app);
+  }
+
+  function taskRow(r) {
+    var row = el("button", "rb-row");
+    row.type = "button"; row.setAttribute("data-task", r.task.key);
+    row.appendChild(el("span", "rb-row__emoji", r.rev.emoji || ""));
+    var main = el("div", "");
+    main.appendChild(el("div", "rb-row__title", r.rev.title));
+    if (r.rev.summary) main.appendChild(el("div", "rb-row__sub", r.rev.summary));
+    main.appendChild(el("div", "rb-row__mark", mark(r.rev, st.iter) + " - " + r.rev.home + (r.rev.repo ? " - " + r.rev.repo : "")));
+    row.appendChild(main);
+    var badges = el("div", "rb-row__badges");
+    if (r.rev.waiting) badges.appendChild(badge("warn", "waiting on you"));
+    badges.appendChild(badge(r.rev.state === "done" ? "neutral" : r.rev.state === "in_flight" ? "online" : "info", r.rev.state));
+    if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
+    row.appendChild(badges);
+    row.addEventListener("click", function () { st.task = r.task.key; render(); });
+    return row;
+  }
+
+  function holdAnswer(parent, task, rev) {
+    var panel = el("section", "fm-card rb-panel");
+    panel.appendChild(el("h3", "", "Waiting on you"));
+    if (rev.hold_reason) panel.appendChild(el("div", "rb-row__sub", rev.hold_reason));
+    if (task.home !== MAIN_HOME) {
+      panel.appendChild(el("div", "rb-row__title", "answer in chat"));
+      parent.appendChild(panel);
+      return;
+    }
+    var form = questionForm(task.id);
+    var opts = el("div", "rb-opts");
+    var radios = [];
+    (rev.reply_terms || []).concat(["reconcile"]).forEach(function (term) {
+      var lab = el("label", "rb-opt");
+      var input = document.createElement("input");
+      input.type = "radio"; input.name = "answer"; input.value = slug(term);
+      radios.push(input);
+      lab.appendChild(input);
+      lab.appendChild(el("span", "", term === "reconcile" ? "Reconcile" : term));
+      opts.appendChild(lab);
+    });
+    form.appendChild(opts);
+    var note = document.createElement("input");
+    note.type = "text"; note.name = "note"; note.className = "rb-field";
+    note.placeholder = "or answer in your own words";
+    form.appendChild(note);
+    var ui = footer(form, "Queue answer", "primary");
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      ui.limit.textContent = "";
+      var picked = radios.filter(function (r) { return r.checked; })[0];
+      var value = picked ? picked.value : "";
+      var text = (note.value || "").trim();
+      var shown = value ? (text ? value + " - " + text : value) : text;
+      if (!shown) return;
+      if (utf8Length(shown) > 512) { ui.limit.textContent = "Answer is too long to queue (512 bytes maximum)."; return; }
+      var ctx = { schema: "fm-bearings-answer.v1", question: task.id, selection: value, note: text };
+      if (rev.close) ctx.close = rev.close;
+      queue(form, "Captain's Call answer - " + rev.title + ": " + shown, rev.title + " -> " + shown, ctx);
+      ui.queued.hidden = false;
+    });
+    panel.appendChild(form);
+    parent.appendChild(panel);
+  }
+
+  /* one-button actions that reuse the existing merge and dispatch routes */
+  function actionForm(parent, key, selection, label, tone, title) {
+    var form = questionForm(key);
+    var ui = footer(form, label, tone);
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      queue(form, label + " - " + title, title + " -> " + selection,
+        { schema: "fm-bearings-answer.v1", question: key, selection: selection, note: "" });
+      ui.queued.hidden = false;
+    });
+    parent.appendChild(form);
+  }
+
+  function actions(parent, task, rev) {
+    if (task.home !== MAIN_HOME || rev.state === "done") return;
+    var panel = el("section", "fm-card rb-panel");
+    var any = false;
+    if (rev.pr_url && (rev.reply_terms || []).indexOf("merge") !== -1) {
+      actionForm(panel, "merge." + task.id, "merge", "Merge now", "gold", rev.title); any = true;
+    }
+    if (rev.state === "queued") {
+      actionForm(panel, "dispatch.charted", task.id, "Dispatch now", "primary", rev.title); any = true;
+    }
+    if (any) parent.appendChild(panel);
+  }
+
+  function commentBox(parent, task) {
+    var panel = el("section", "fm-card rb-panel");
+    panel.appendChild(el("h3", "", "Comment"));
+    var form = questionForm("comment." + slug(task.key));
+    var area = document.createElement("textarea");
+    area.name = "comment"; area.className = "rb-field"; area.rows = 3;
+    area.placeholder = "Write a comment for the first mate";
+    form.appendChild(area);
+    var ui = footer(form, "Queue comment", "primary");
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      ui.limit.textContent = "";
+      var text = (area.value || "").trim();
+      if (!text) return;
+      if (utf8Length(text) > COMMENT_LIMIT) { ui.limit.textContent = "Comment is too long to queue (" + COMMENT_LIMIT + " bytes maximum)."; return; }
+      queue(form, "Comment on " + task.id + ": " + text, text,
+        { schema: "fm-bearings-comment.v1", task: task.key, iteration: data.iteration, text: text });
+      ui.queued.hidden = false;
+    });
+    panel.appendChild(form);
+    parent.appendChild(panel);
+  }
+
+  function commentThread(parent, task) {
+    if (!task.comments.length) return;
+    var panel = el("section", "fm-card rb-panel");
+    panel.appendChild(el("h3", "", "Comments"));
+    task.comments.forEach(function (c) {
+      var box = el("div", "rb-comment");
+      box.appendChild(el("div", "rb-row__mark", "iteration " + c.iteration + (c.at ? " - " + c.at : "")));
+      box.appendChild(el("div", "", c.text));
+      if (c.reply) {
+        var rep = el("div", "rb-reply");
+        rep.appendChild(el("div", "rb-row__mark", "first mate" + (c.reply.at ? " - " + c.reply.at : "")));
+        rep.appendChild(el("div", "", c.reply.text));
+        box.appendChild(rep);
+      }
+      panel.appendChild(box);
+    });
+    parent.appendChild(panel);
+  }
+
+  function history(parent, task) {
+    var panel = el("section", "fm-card rb-panel");
+    panel.appendChild(el("h3", "", "History"));
+    task.revisions.forEach(function (rev, i) {
+      var box = el("div", "rb-rev");
+      box.appendChild(el("div", "rb-rev__head", "Iteration " + rev.iter));
+      var older = task.revisions[i + 1];
+      if (!older) {
+        box.appendChild(el("div", "rb-row__sub", task.older.length ? "earlier revisions are listed below" : "first revision"));
+      } else {
+        changedFields(rev, older).forEach(function (c) {
+          var line = el("div", "rb-change");
+          line.appendChild(el("span", "", c.field + ": "));
+          if (c.field === "note") {
+            var shown = false, diff = el("div", "rb-diff");
+            diff.hidden = true;
+            var btn = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Show note diff");
+            btn.type = "button";
+            btn.addEventListener("click", function () {
+              shown = !shown;
+              diff.hidden = !shown;
+              btn.textContent = shown ? "Hide note diff" : "Show note diff";
+              clear(diff);
+              if (shown) lineDiff(c.from, c.to).forEach(function (d) {
+                diff.appendChild(el("div", d.t === "+" ? "rb-diff__add" : d.t === "-" ? "rb-diff__del" : "", d.t + " " + d.s));
+              });
+            });
+            line.appendChild(el("span", "", "note changed "));
+            line.appendChild(btn);
+            line.appendChild(diff);
+          } else {
+            line.appendChild(el("span", "rb-old", fieldText(c.from)));
+            line.appendChild(el("span", "", " -> "));
+            line.appendChild(el("span", "rb-new", fieldText(c.to)));
+          }
+          box.appendChild(line);
+        });
+      }
+      panel.appendChild(box);
+    });
+    task.older.forEach(function (o) {
+      panel.appendChild(el("div", "rb-older", "iteration " + o.iter + ": " + o.line));
+    });
+    parent.appendChild(panel);
+  }
+
+  function renderDetail(task) {
+    clear(app);
+    var rev = asOf(task, st.iter) || task.revisions[0];
+    var back = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Back to iteration " + st.iter);
+    back.type = "button"; back.setAttribute("data-back", "1");
+    back.addEventListener("click", function () { st.task = null; render(); });
+    app.appendChild(back);
+    var box = el("div", "rb-detail");
+    var head = el("section", "fm-card rb-panel");
+    head.appendChild(el("h3", "", (rev.emoji ? rev.emoji + " " : "") + rev.title));
+    var badges = el("div", "rb-row__badges");
+    badges.appendChild(badge("info", rev.state));
+    badges.appendChild(badge("neutral", rev.home));
+    if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
+    if (rev.theme) badges.appendChild(badge("solid", rev.theme));
+    head.appendChild(badges);
+    if (rev.summary) head.appendChild(el("div", "", rev.summary));
+    if (rev.blockers) head.appendChild(el("div", "rb-row__sub", "blocked by " + rev.blockers));
+    var links = el("div", "rb-links");
+    if (rev.pr_url) links.appendChild(link(rev.pr_url, rev.pr_url));
+    if (rev.issue_url) links.appendChild(link(rev.issue_url, rev.issue_url));
+    jiraKeys(rev.title + " " + (rev.note || "")).forEach(function (k) { links.appendChild(link(JIRA_BASE + k, k)); });
+    head.appendChild(links);
+    box.appendChild(head);
+    if (rev.waiting) holdAnswer(box, task, rev);
+    actions(box, task, rev);
+    commentBox(box, task);
+    commentThread(box, task);
+    history(box, task);
+    app.appendChild(box);
+  }
+
+  function render() {
+    renderNav();
+    var task = null;
+    if (st.task) data.tasks.forEach(function (t) { if (t.key === st.task) task = t; });
+    if (task) renderDetail(task); else renderList();
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
