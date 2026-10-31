@@ -483,6 +483,28 @@ feed_reconcile_requests() {  # <adapter> <source-id> <result-file>
         --source-id "$id" --source "the captured result $id sequence $seq" >/dev/null 2>&1
 }
 
+# Turn each Fleet Recap board comment in a capture into an inbox note for the
+# first mate. The request id derives from the source id, capture sequence, and
+# row position, so a repeated delivery of one capture replays the same notes
+# and a comment never reaches the keyed-answer intake. Best-effort and silenced
+# like the seams above: it never acknowledges the capture.
+feed_comments() {  # <adapter> <source-id> <result-file>
+  local adapter=$1 id=$2 result=$3 script seq rows task iter text n=0 fed=1
+  script=$(adapter_script "$adapter")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 1
+  seq=$(fm_procevent_result_sequence "$result") || return 1
+  rows=$("$script" comments "$result" 2>/dev/null) || return 1
+  while IFS=$'\t' read -r task iter text; do
+    [ -n "$task" ] || continue
+    n=$((n + 1))
+    "$SCRIPT_DIR/fm-inbox.sh" note --request-id "recap-comment:$id:$seq:$n" \
+      "[recap task=$task iteration=$iter] $text" >/dev/null 2>&1 && fed=0
+  done <<EOF
+$rows
+EOF
+  return "$fed"
+}
+
 read_adapter() {  # <source-id>
   local f; f=$(source_file "$1")
   [ -f "$f" ] && [ ! -L "$f" ] || return 1
@@ -1381,6 +1403,10 @@ EOF
   if [ "$extension_owner" -eq 0 ] \
     && feed_keyed_answers "$adapter" "$id" "$durable"; then
     printf 'answers-fed: %s\n' "$id"
+  fi
+  if [ "$extension_owner" -eq 0 ] \
+    && feed_comments "$adapter" "$id" "$durable"; then
+    printf 'comments-fed: %s\n' "$id"
   fi
 
   # A self-announcing adapter's autohandle announces through its own durable

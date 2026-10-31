@@ -17,10 +17,10 @@
 ## 3. Comment route
 
 - [x] 3.1 Add comment boxes to the template with the Lavish question markup and the `fm-bearings-comment.v1` context
-- [ ] 3.2 Add the `comments` command to `bin/fm-procevent-lavish.sh` and prove the answer parser ignores comment rows
-- [ ] 3.3 Feed comments from `bin/fm-procevent.sh` to `fm-inbox.sh note` with a task and iteration tag and a derived request id
+- [x] 3.2 Add the `comments` command to `bin/fm-procevent-lavish.sh` and prove the answer parser ignores comment rows
+- [x] 3.3 Feed comments from `bin/fm-procevent.sh` to `fm-inbox.sh note` with a task and iteration tag and a derived request id
 - [x] 3.4 Embed comment threads with their replies in the board payload
-- [ ] 3.5 Add tests for note creation, duplicate delivery replay, a comment that contains a task id, and reply rendering
+- [x] 3.5 Add tests for note creation, duplicate delivery replay, a comment that contains a task id, and reply rendering
 
 ## 4. Merge and dispatch task actions
 

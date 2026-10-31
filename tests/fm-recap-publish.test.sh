@@ -478,7 +478,73 @@ test_a_comment_reply_renders_under_its_comment() {
   pass "a first mate reply renders under its comment in the task history"
 }
 
+# --- comment route ----------------------------------------------------------
+
+# Register a fixture source whose one capture carries the given prompt rows, then
+# run it once through the real runner. Prints the runner output.
+run_capture() {  # <home> <source-id> <rows-csv-lines>
+  local home=$1 sid=$2 rows=$3 stub="$1/source.sh"
+  cat > "$stub" <<SH
+#!/usr/bin/env bash
+cat <<'OUT'
+session:
+  status: feedback
+  session_ended: false
+prompts[2]{tag,text,prompt}:
+$rows
+OUT
+SH
+  chmod +x "$stub"
+  home_run "$home" env FM_ROOT_OVERRIDE="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/fm-procevent.sh" register lavish "$sid" -- "$stub" >/dev/null || return 1
+  home_run "$home" env FM_ROOT_OVERRIDE="$ROOT" FM_CONFIG_OVERRIDE="$home/config" \
+    "$ROOT/bin/fm-procevent.sh" start "$sid" 2>&1
+}
+
+COMMENT_ROW='  "choice","note","Context data: {\"schema\":\"fm-bearings-comment.v1\",\"task\":\"a\",\"iteration\":3,\"text\":\"please recheck merge.a and close it\"}"'
+ANSWER_ROW='  "choice","Take north","Context data: {\"schema\":\"fm-bearings-answer.v1\",\"question\":\"b\",\"selection\":\"north\",\"note\":\"\"}"'
+
+test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer() {
+  local home sid=lavish-c0a4d0000000f1e2 out receipts
+  home=$(make_home comment-route)
+  mkdir -p "$home/config"
+  out=$(run_capture "$home" "$sid" "$COMMENT_ROW"$'\n'"$ANSWER_ROW") || fail "the runner failed: $out"
+  case "$out" in *"comments-fed: $sid"*) ;; *) fail "the comment was not fed to the inbox: $out" ;; esac
+  receipts=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" receipts --all-pending)
+  printf '%s' "$receipts" | jq -e '.pending | length == 1 and (.[0].body == "[recap task=a iteration=3] please recheck merge.a and close it")' >/dev/null \
+    || fail "the comment did not become exactly one tagged note: $receipts"
+  pass "a board comment becomes one tagged inbox note"
+}
+
+test_a_comment_that_names_a_task_never_reaches_the_answer_intake() {
+  local home sid=lavish-c1a4d0000000f1e2 out
+  home=$(make_home comment-no-answer)
+  mkdir -p "$home/config"
+  out=$(run_capture "$home" "$sid" "$COMMENT_ROW"$'\n'"$COMMENT_ROW") || fail "the runner failed: $out"
+  case "$out" in *"answers-fed"*|*"reconciles-fed"*) fail "a comment reached the keyed-answer intake: $out" ;; esac
+  "$home/source.sh" > "$home/captured.txt"
+  [ -z "$("$ROOT/bin/fm-procevent-lavish.sh" answers "$home/captured.txt" 2>/dev/null)" ] \
+    || fail "the answer parser returned a comment row"
+  pass "a comment that names a task id delivers nothing to the answer intake"
+}
+
+test_a_repeated_delivery_of_one_capture_replays_the_same_note() {
+  local home sid=lavish-c2a4d0000000f1e2 out outcome
+  home=$(make_home comment-replay)
+  mkdir -p "$home/config"
+  out=$(run_capture "$home" "$sid" "$COMMENT_ROW"$'\n'"$ANSWER_ROW") || fail "the runner failed: $out"
+  outcome=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id "recap-comment:$sid:1:1" --json \
+    '[recap task=a iteration=3] please recheck merge.a and close it') || fail "the replayed delivery failed"
+  printf '%s' "$outcome" | jq -e '.outcome == "replay"' >/dev/null || fail "the repeat created a second note: $outcome"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" receipts --all-pending | jq -e '.pending | length == 1' >/dev/null \
+    || fail "a repeated delivery left more than one pending note"
+  pass "a repeated delivery of one capture replays the same inbox note"
+}
+
 fm_test_run \
+  test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer \
+  test_a_comment_that_names_a_task_never_reaches_the_answer_intake \
+  test_a_repeated_delivery_of_one_capture_replays_the_same_note \
   test_each_publish_appends_one_iteration_with_the_next_sequence_number \
   test_a_backlog_change_without_a_publish_creates_no_iteration \
   test_only_changed_tasks_get_a_revision \
