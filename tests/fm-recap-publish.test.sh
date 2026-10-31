@@ -153,6 +153,25 @@ test_each_publish_appends_one_iteration_with_the_next_sequence_number() {
   pass "each publish appends exactly one iteration with the next sequence number"
 }
 
+test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_home real-collect)
+  mkdir -p "$home/config" "$home/projects"
+  fm_test_tasks_toml "$home/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  (cd "$home" && tasks-axi add sample-task "Sample task title" --repo sample >/dev/null) \
+    || fail "could not create the backlog task"
+  write_recap "$home" '{"sample-task":{"theme":"LW","summary":"matched"}}'
+  out=$(home_run "$home" env -u FM_RECAP_COLLECT_FILE FM_CONFIG_OVERRIDE="$home/config" \
+    "$PUBLISH" publish "$home/recap.json" 2>&1) || fail "the real-collection publish failed: $out"
+  tail -1 "$(log_of "$home")" | jq -e '.tasks == ["sample-task"]
+    and .revisions["sample-task"].title == "Sample task title"
+    and .revisions["sample-task"].theme == "LW"' >/dev/null \
+    || fail "the task key was not its bare id or the recap entry did not match: $(tail -1 "$(log_of "$home")")"
+  pass "the real collection keys a task by its bare id and reads its quoted title"
+}
+
 test_a_backlog_change_without_a_publish_creates_no_iteration() {
   local home
   home=$(make_home no-timer)
@@ -546,6 +565,7 @@ fm_test_run \
   test_a_comment_that_names_a_task_never_reaches_the_answer_intake \
   test_a_repeated_delivery_of_one_capture_replays_the_same_note \
   test_each_publish_appends_one_iteration_with_the_next_sequence_number \
+  test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title \
   test_a_backlog_change_without_a_publish_creates_no_iteration \
   test_only_changed_tasks_get_a_revision \
   test_a_summary_change_alone_stores_a_revision \

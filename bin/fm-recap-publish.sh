@@ -128,7 +128,7 @@ task_from_show() {  # <show-output>
   printf '%s\n' "$1" | jq -R -s '
     split("\n")
     | map(select(test("^  [a-z_]+: ")) | capture("^  (?<k>[a-z_]+): (?<v>.*)$"))
-    | map({key: .k, value: (.v | (try fromjson catch .) | tostring)})
+    | map({key: .k, value: (.v as $s | ((try ($s | fromjson | select(type == "string")) catch null) // $s))})
     | from_entries'
 }
 
