@@ -200,7 +200,7 @@ __FM_BEARINGS_BOARD_DATA__
   var data = JSON.parse(document.getElementById("bearings-data").textContent);
   var MAIN_HOME = "main";
   var KEEP_FINISHED = 3;
-  var JIRA_BASE = "https://parcelperform.atlassian.net/browse/";
+  var JIRA_BASE = typeof data.jira_base === "string" ? data.jira_base : "";
   var COMMENT_LIMIT = 2000;
   var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
     "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
@@ -626,7 +626,7 @@ __FM_BEARINGS_BOARD_DATA__
     var links = el("div", "rb-links");
     if (rev.pr_url) links.appendChild(link(rev.pr_url, rev.pr_url));
     if (rev.issue_url) links.appendChild(link(rev.issue_url, rev.issue_url));
-    jiraKeys(rev.title + " " + (rev.note || "")).forEach(function (k) { links.appendChild(link(JIRA_BASE + k, k)); });
+    jiraKeys(rev.title + " " + (rev.note || "")).forEach(function (k) { links.appendChild(JIRA_BASE ? link(JIRA_BASE + k, k) : el("span", "", k)); });
     head.appendChild(links);
     box.appendChild(head);
     if (rev.waiting) holdAnswer(box, task, rev);

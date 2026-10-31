@@ -408,17 +408,28 @@ test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs() {
   pass "the task detail shows newest-first history with field changes and a note diff"
 }
 
-test_a_jira_key_renders_as_a_link_with_no_status() {
-  local home board out
+test_a_jira_key_links_only_through_the_private_base_setting() {
+  local home board out base='https://jira.example.test/browse/'
   home=$(make_home jira)
+  mkdir -p "$home/config"
   {
-    entry 1 '["a"]' "{\"a\": $(rev a queued "COD-5987 Task A" '{"note":"see COD-5987"}')}"
+    entry 1 '["a"]' "{\"a\": $(rev a queued "ABC-123 Task A" '{"note":"see ABC-123"}')}"
   } > "$(log_of "$home")"
   board=$(refresh_board "$home")
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
-  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a") | .attrs.href] == ["https://parcelperform.atlassian.net/browse/COD-5987"]' >/dev/null \
-    || fail "the Jira key was not rendered as a single link: $out"
-  pass "a Jira key renders as a link only"
+  printf '%s' "$out" | jq -e '([.nodes[] | select(.tag == "a")] | length == 0) and ([.nodes[] | select(.tag == "span" and .text == "ABC-123")] | length == 1)' >/dev/null \
+    || fail "an unset base did not leave the key as plain text: $out"
+  printf '%s\n' "$base" > "$home/config/recap-jira-base"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e --arg href "${base}ABC-123" '[.nodes[] | select(.tag == "a") | .attrs.href] == [$href]' >/dev/null \
+    || fail "the configured base did not make the key a single link: $out"
+  printf '%s\n' 'javascript:alert(1)//' > "$home/config/recap-jira-base"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a")] | length == 0' >/dev/null \
+    || fail "a non-https base produced a link: $out"
+  pass "a Jira key links only through the private base setting"
 }
 
 test_warnings_have_their_own_section_and_never_count_as_work() {
@@ -594,7 +605,7 @@ fm_test_run \
   test_the_captain_can_move_between_iterations \
   test_a_finished_task_stays_three_iterations_then_hides_but_remains_reachable \
   test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs \
-  test_a_jira_key_renders_as_a_link_with_no_status \
+  test_a_jira_key_links_only_through_the_private_base_setting \
   test_warnings_have_their_own_section_and_never_count_as_work \
   test_a_main_home_hold_queues_its_answer_for_the_captain_hold_intake \
   test_a_secondmate_hold_says_answer_in_chat_and_offers_no_answer_buttons \

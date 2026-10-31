@@ -2216,6 +2216,14 @@ A backup remote named `origin`, absent from the project clone, or pointing at on
 The files are static, never executed, and local to each home rather than part of secondmate inherited configuration.
 `bin/fm-external-review-lib.sh`'s header owns the readers, and [`docs/external-review-forge.md`](external-review-forge.md) owns the backup rule and its teardown consequence.
 
+## Fleet Recap Jira base (config/recap-jira-base)
+
+`config/recap-jira-base` is an optional local, gitignored file for the Fleet Recap board.
+Its first line is an `https://` URL prefix, for example `https://jira.example.test/browse/`.
+[`bin/fm-recap-publish.sh`](../bin/fm-recap-publish.sh) puts that prefix before each Jira key the board finds in a task title or note, so the key becomes a link.
+When the file is absent, unreadable, a symlink, or its first line is not an `https://` URL without whitespace, the board shows the key as plain text with no link.
+The file is local to each home and not part of secondmate inherited configuration.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.

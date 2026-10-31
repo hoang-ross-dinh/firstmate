@@ -48,6 +48,10 @@
 # skips and reports a line it cannot read, which includes an unterminated last
 # line left by a torn write.
 #
+# config/recap-jira-base (optional, local, gitignored) holds one https URL prefix
+# such as https://jira.example.test/browse/ that the board puts before a Jira key
+# to make a link. Without it a key shows as plain text.
+#
 # THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations of every task's
 # history in full and each older revision as one line. The log keeps everything.
 #
@@ -59,6 +63,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 LOG="$DATA/recap-iterations.jsonl"
 LOG_LOCK="$DATA/.recap-iterations.lock"
 
@@ -279,8 +284,21 @@ collect_comments() {
     <<< "$receipts" 2>/dev/null || printf '[]\n'
 }
 
+# The Jira base URL is a private setting: the first line of config/recap-jira-base,
+# an https URL the board prefixes to a Jira key. Absent, unreadable, symlinked, or
+# malformed means no base, and the board shows a key as plain text.
+jira_base() {
+  local f="$CONFIG/recap-jira-base" line
+  [ -f "$f" ] && [ ! -L "$f" ] || return 0
+  IFS= read -r line < "$f" || true
+  case "$line" in
+    https://*[[:space:]]*|https://) return 0 ;;
+    https://*) printf '%s\n' "$line" ;;
+  esac
+}
+
 compose_board() {  # <entries.json> <home-name>
-  jq -c -n --arg schema "$BOARD_SCHEMA" --arg home "$2" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  jq -c -n --arg schema "$BOARD_SCHEMA" --arg home "$2" --arg jira "$(jira_base)" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson window "$WINDOW" --slurpfile entries "$1" '
     ($entries[0] | sort_by(.seq)) as $entries
     | ($entries | last) as $latest
@@ -289,6 +307,7 @@ compose_board() {  # <entries.json> <home-name>
     {
       schema: $schema,
       home: $home,
+      jira_base: $jira,
       generated: $at,
       iteration: $latest.seq,
       window: $window,
