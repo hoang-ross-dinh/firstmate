@@ -1,0 +1,137 @@
+## Context
+
+The captain reviews fleet work through a chat Recap and the `/bearings lavish` board.
+No script produces the chat Recap, because its format exists only in agent memory.
+The board is stale because an agent composes its payload and nothing rebuilds it between `/bearings lavish` calls.
+Backlog note edits replace text, so the backlog keeps no per-task history.
+
+The board already routes answers to the captain-hold keyed-answer intake through a supervised runner (`bin/fm-procevent-lavish.sh` feeding `bin/fm-captain-hold.sh`).
+Lavish watches the artifact file and reloads by itself, and keeps scroll, unsent annotation text, `data-lavish-question` answers, and queued feedback across reloads.
+Lavish does not keep application-owned form text.
+
+The captain grilled the design and confirmed 13 decisions (D1 to D13).
+This document records each one so the reasons survive.
+The grill sources are the request and the grill report in the Quarterdeck architect home (`data/quarterdeck-ticket-ui-griller/request.md` and `report.md`).
+
+After the grill the captain dropped Beads.
+All backlogs stay on the tasks-axi markdown backend.
+The rule that the board reads backlogs only through tasks-axi verbs still applies.
+
+## Goals / Non-Goals
+
+**Goals:**
+- One review surface that replaces the chat Recap and the `/bearings lavish` board.
+- A per-task history of revisions across iterations, kept in an append-only log.
+- Feedback from the board to the first mate: hold answers and comments.
+
+**Non-Goals:**
+- Owner-aware answer routing to secondmate homes.
+- Jira status sync.
+- A separate web server.
+- A backup of the iteration log.
+
+## Decisions
+
+### D1. Scope
+- **Decision:** What outcome should the work deliver?
+- **Captain's choice:** A full ticket system. The Fleet Recap board replaces the chat Recap and the `/bearings lavish` board as the review surface for all fleet tasks.
+- **Rejected recommendation:** A live board only, with no ticket concept. The captain overrode it.
+- **Reason:** The captain's request names a ticket management system with a live feed. The review need is history and feedback per task, which a live board without tickets does not give.
+
+### D2. System of record
+- **Decision:** Where does task data live?
+- **Captain's choice:** The existing backlogs stay the system of record, plus a per-item change history. Unchanged items keep their state. The board reads tasks only through `bin/fm-bearings-snapshot.sh --json` and `bin/fm-tasks-axi.sh`, and owns no task data.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** The backlogs already hold task state. A second task store would drift from them. The Beads move was dropped, so the markdown backend and its tasks-axi verbs stay the only read path.
+
+### D3. Iteration
+- **Decision:** What is an iteration?
+- **Captain's choice:** Each time the captain sees a Recap. The publish command records one iteration, and no timer or backlog change alone creates one.
+- **Rejected recommendation:** A log at both levels, per Recap and per task. The captain's choice superseded it. The per-task level survives as revisions inside an iteration entry (D6).
+- **Reason:** The captain reviews in rounds. A round is the natural unit to compare against.
+
+### D4. Ticket unit
+- **Decision:** What is one ticket?
+- **Captain's choice:** One backlog task. A theme code is a grouping label stored in the revision.
+- **Rejected recommendation:** The Recap theme as the ticket. The captain overrode it.
+- **Reason:** A Recap theme is not a backlog item, so a theme ticket has no durable identity and no backlog state. A backlog task has an id, a state, and an owner home.
+
+### D5. Chat Recap
+- **Decision:** What happens to the chat Recap?
+- **Captain's choice:** The UI replaces it. One publish command, next to `fm-bearings-board.sh build`, records the iteration. The chat gets a one-line pointer.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** The Recap format exists only in agent memory. One command makes the publication deterministic and testable.
+
+### D6. Revision content
+- **Decision:** What does a revision hold?
+- **Captain's choice:** The task's backlog fields (state, title, home, repo, hold reason, blockers, PR or MR URL, issue URL, note) plus the first mate's summary, emoji, theme code, and reply terms at publish time. A task with no field change gets no new revision.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** Storing only changes keeps the log small. The history shows what changed and when.
+
+### D7. Feedback routing
+- **Decision:** How does the captain's feedback reach the first mate?
+- **Captain's choice:** Hold answers go to the captain-hold keyed-answer intake. Comments go to `bin/fm-inbox.sh note` with a request id. Inbox replies render as the comment thread.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** The captain-hold intake is the one place decisions are recorded, so no parallel decision store exists. A comment is not a decision, and the inbox is the existing capture surface. A request id makes a repeated delivery return the original note.
+
+### D8. Hosting and page size
+- **Decision:** Where does the board run, and how large may the page grow?
+- **Captain's choice:** On the existing Lavish session, extended, with no new server and no new port. Comment boxes use the Lavish question markup so drafts survive reload. The page renders the last 30 iterations in full and older revisions as one line each. The records keep everything.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** Lavish already serves the board and keeps question answers across reload. Estimated history growth is about 3 MB per month without a display window, so the window keeps the page small.
+
+### D9. Home coverage
+- **Decision:** Which homes does the board cover?
+- **Captain's choice:** All homes. Answer buttons appear only where routing works. Otherwise the board shows "answer in chat".
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** The board documentation names one gap: a secondmate hold's answer request is refused in the main home until owner-aware routing ships. That routing is out of scope.
+
+### D10. Finished tasks
+- **Decision:** How long does a finished task stay in the default list?
+- **Captain's choice:** Keep it for 3 iterations (K=3), then hide it from the default list. The All filter and the task detail still show it.
+- **Rejected recommendation:** Show a finished task once. The captain overrode it.
+- **Reason:** A finished task visible for several rounds lets the captain confirm the outcome before it leaves the list. Three iterations is the captain's chosen number.
+
+### D11. Jira
+- **Decision:** How does the board treat Jira?
+- **Captain's choice:** Link only. The board shows a Jira key as a link and the publish command makes no Jira call.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** Jira status sync is out of scope. A link costs nothing and needs no credential.
+
+### D12. One board
+- **Decision:** How does the new board replace the old one?
+- **Captain's choice:** One board directly. It replaces `/bearings lavish` at the stable board path and session. Merge and dispatch are task actions that reuse the existing `merge.<task-id>` and `dispatch.charted` routes.
+- **Rejected recommendation:** A two-phase rollout with both boards. The captain chose the direct replacement.
+- **Reason:** One board means one surface to review. The captain accepted the lack of a fallback board. Because of that risk, the existing `fm-bearings-board.sh build` path and its tests stay working until the new board meets its acceptance criteria.
+
+### D13. Storage
+- **Decision:** Where does the iteration log live?
+- **Captain's choice:** An append-only file in the main home's gitignored `data/` directory. Only the main first mate's publish command writes it. No backup is in scope.
+- **Rejected recommendation:** None. The captain accepted the recommendation.
+- **Reason:** The log is private operational state. The captain accepted that history is lost if the disk is lost.
+
+## Implementation approach
+
+These choices serve the decisions above and are the implementer's, not the captain's.
+
+- **Iteration log.** A JSON Lines file `data/recap-iterations.jsonl`. Each line is one iteration entry: sequence number, publish time, the ids of every task present, and the new revisions. The reader computes each task's last revision by scanning. A line without a closing newline or with invalid JSON is skipped and reported. Appending uses one write of a complete line, preceded by a newline when the file does not end in one.
+- **Publish command.** `bin/fm-recap-publish.sh publish <recap.json>`. The first mate composes `<recap.json>` with its summary, emoji, theme code, and reply terms per task id. The command reads backlog fields through the bearings snapshot and tasks-axi verbs, appends the iteration, builds the board, and prints the chat-line facts. A `refresh` subcommand rebuilds the board from the existing log without appending an iteration, so rendering a reply never costs an iteration.
+- **Board build.** `bin/fm-bearings-board.sh build` accepts a second payload schema, `fm-recap-board.v1`, and selects a new template for it. It reuses the existing session establishment, binding, arming, and reopening sequence. The `fm-bearings-board.v1` path and its tests stay unchanged. The publish command calls this build, so an ended session reopens through the existing sequence.
+- **Display window.** The publish command embeds full revisions for the last 30 iterations and one line per older revision. The log keeps everything.
+- **Answer route.** The template keeps the existing `fm-bearings-answer.v1` question markup for hold answers. An answer button appears only when the task id exists in the main backlog. Any hold not in the main backlog shows "answer in chat".
+- **Comment route.** Each task detail has a comment box that uses `data-lavish-question`. Its context carries a new schema, `fm-bearings-comment.v1`, which the existing answer parser ignores. The Lavish adapter gains a `comments` command. The generic runner feeds each comment to `fm-inbox.sh note --request-id <id>` with a tag naming the task id and iteration. The request id derives from the source id, the capture sequence, and the task id, so a repeated delivery replays the original note.
+- **Reply thread.** The publish and refresh commands read `fm-inbox.sh receipts`, match notes by their task tag, and embed each comment with its reply in the payload. Threads are display data and do not enter revisions.
+- **Task actions.** Merge and dispatch buttons reuse the question keys `merge.<task-id>` and `dispatch.charted`. The buttons appear only for main-home tasks, because the existing handlers resolve the PR and the backlog entry in the main home.
+
+## Risks / Trade-offs
+
+- [No fallback board after the direct replacement (D12)] -> Keep the existing build path and tests working, and replace the skill text only when the new board meets its acceptance criteria.
+- [A comment box outside the Lavish question markup loses typed text on reload] -> Use `data-lavish-question` and add a test that the template renders it.
+- [A comment could forge a decision key] -> The comment uses its own schema, and the existing answer parser ignores it. A test covers a comment that contains a task id.
+- [The log has no backup] -> The captain accepted this. The design adds no backup.
+- [A crash can leave an incomplete last line] -> The reader skips and reports it, and the next append starts on a new line.
+- [Two publishes at once] -> The publish command takes a lock on the log directory before it reads the last sequence number.
+
+## Open Questions
+
+None blocking. The grill left the Jira choice open, and the captain later decided there is no Jira ticket.
