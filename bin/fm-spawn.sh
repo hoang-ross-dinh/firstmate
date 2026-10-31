@@ -472,6 +472,14 @@
 #   firstmate observes a bypass approval prompt or policy refusal; no polling.
 #   T3 Code always uses full-access, so it refuses Claude `auto` and Codex
 #   `approve-for-me` or `restricted` before mutation.
+# Claude auto-compact window (config/claude-crew-autocompact-window):
+#   Optional. One integer token count from 100000 to 1000000 (whitespace
+#   trimmed). When present, every claude ship and scout launch, on spawn and
+#   relaunch, carries CLAUDE_CODE_AUTO_COMPACT_WINDOW=<value>. A secondmate
+#   launch never does, other harnesses are unchanged, and an absent file leaves
+#   the launch byte-identical. Any other content, or an unreadable file, refuses
+#   the spawn before any endpoint, worktree, or record exists. The file is not
+#   inherited into secondmate homes.
 # Worker tool exclusions:
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
@@ -874,6 +882,34 @@ fi
 if [ "$CODEX_PERMISSION_MODE" = restricted ]; then
   CODEX_APPROVAL_MODE=restricted
   CODEX_APPROVAL_FLAG='--sandbox workspace-write --ask-for-approval on-request'
+fi
+# config/claude-crew-autocompact-window (header above): resolved once per spawn
+# or relaunch, before any mutation, so a malformed file refuses instead of
+# launching a worker on a compaction window the captain did not choose.
+if ! CLAUDE_COMPACT_PRESENT=$(fm_config_source_present "$CONFIG/claude-crew-autocompact-window"); then
+  exit 1
+fi
+CLAUDE_COMPACT_WINDOW=
+if [ "$CLAUDE_COMPACT_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/claude-crew-autocompact-window" ] || [ ! -r "$CONFIG/claude-crew-autocompact-window" ]; then
+    echo "error: config/claude-crew-autocompact-window must be a readable regular file holding one integer from 100000 to 1000000" >&2
+    exit 1
+  fi
+  CLAUDE_COMPACT_WINDOW=$(tr -d '[:space:]' <"$CONFIG/claude-crew-autocompact-window" || true)
+  CLAUDE_COMPACT_WINDOW_OK=0
+  case "$CLAUDE_COMPACT_WINDOW" in
+  '' | *[!0-9]*) ;;
+  *)
+    if [ "${#CLAUDE_COMPACT_WINDOW}" -le 7 ] && [ "$((10#$CLAUDE_COMPACT_WINDOW))" -ge 100000 ] && [ "$((10#$CLAUDE_COMPACT_WINDOW))" -le 1000000 ]; then
+      CLAUDE_COMPACT_WINDOW_OK=1
+    fi
+    ;;
+  esac
+  if [ "$CLAUDE_COMPACT_WINDOW_OK" != 1 ]; then
+    echo "error: config/claude-crew-autocompact-window holds '$CLAUDE_COMPACT_WINDOW'; accepted values are one integer token count from 100000 to 1000000" >&2
+    exit 1
+  fi
+  CLAUDE_COMPACT_WINDOW=$((10#$CLAUDE_COMPACT_WINDOW))
 fi
 # config/lavish-axi-host is the primary-owned per-machine address for the
 # shared Lavish server. Read it once per launch and refuse malformed values so
@@ -7260,6 +7296,9 @@ if [ -n "$WORKER_ACCOUNT" ]; then
   esac
 elif [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
+fi
+if [ "$HARNESS" = claude ] && [ "$KIND" != secondmate ] && [ -n "$CLAUDE_COMPACT_WINDOW" ]; then
+  LAUNCH="CLAUDE_CODE_AUTO_COMPACT_WINDOW=$CLAUDE_COMPACT_WINDOW $LAUNCH"
 fi
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")

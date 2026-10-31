@@ -2577,6 +2577,58 @@ test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata() {
   pass "an unrecognized config/claude-permission-mode token refuses before any endpoint or metadata"
 }
 
+# config/claude-crew-autocompact-window adds CLAUDE_CODE_AUTO_COMPACT_WINDOW to
+# claude crewmate and scout launches only: never a secondmate, never when absent,
+# and a value outside 100000-1000000 refuses before any launch.
+test_claude_crew_autocompact_window_reaches_workers_only() {
+  local rec id out status launch baseline sm
+  id=compact-window-z30
+  rec=$(make_spawn_case compact-window claude "$id" compact-window-scout-z31 compact-window-sm-z32 compact-window-bad-z33)
+  read_case_record "$rec"
+
+  run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" >/dev/null \
+    || fail "baseline claude spawn should succeed"
+  baseline=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$baseline" "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "an absent file must not add the variable"
+
+  printf ' 350000\n' > "$HOME_DIR/config/claude-crew-autocompact-window"
+  rm -f "$HOME_DIR/state/$id.meta"
+  rm -f "$FAKEBIN_DIR/.spawn-window"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 2>&1)
+  status=$?
+  expect_code 0 "$status" "crewmate spawn with a valid window should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 " "crewmate launch lacks the window variable"
+  # The trailing doorbell names a per-spawn record path, so compare everything before the worker prompt.
+  [ "$(printf '%s' "${launch/CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 /}" | sed 's/ --append-system-prompt.*//')" = "$(printf '%s' "$baseline" | sed 's/ --append-system-prompt.*//')" ] \
+    || fail "the variable must be the only difference from the absent-file launch"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" compact-window-scout-z31 "$PROJ_DIR" --scout 2>&1)
+  status=$?
+  expect_code 0 "$status" "scout spawn with a valid window should succeed"$'\n'"$out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 " "scout launch lacks the window variable"
+
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" compact-window-sm-z32
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" compact-window-sm-z32 "$sm" --secondmate 2>&1)
+  status=$?
+  expect_code 0 "$status" "secondmate spawn should succeed"$'\n'"$out"
+  assert_not_contains "$(cat "$LAUNCH_LOG")" "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "a secondmate launch must not carry the window variable"
+
+  for bad in 99999 1000001 12abc 1.5 ''; do
+    printf '%s\n' "$bad" > "$HOME_DIR/config/claude-crew-autocompact-window"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" compact-window-bad-z33 "$PROJ_DIR" 2>&1)
+    status=$?
+    expect_code 1 "$status" "window '$bad' must refuse the spawn"
+    assert_contains "$out" "config/claude-crew-autocompact-window" "refusal must name the file for '$bad'"
+    assert_contains "$out" "100000 to 1000000" "refusal must name the accepted range for '$bad'"
+    [ ! -s "$LAUNCH_LOG" ] || fail "an invalid window '$bad' must launch nothing"
+    assert_absent "$HOME_DIR/state/compact-window-bad-z33.meta" "refusal must happen before meta is written"
+  done
+  pass "config/claude-crew-autocompact-window reaches claude crewmates and scouts only and refuses invalid values"
+}
+
 test_non_claude_harness_ignores_claude_permission_mode() {
   local rec id out status launch
   id=permmode-codex-z23
@@ -2788,6 +2840,7 @@ test_claude_permission_mode_bypass_swaps_only_the_permission_flag
 test_claude_permission_mode_auto_reaches_scout_launch
 test_claude_worker_launch_covers_task_channel_dirs
 test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
+test_claude_crew_autocompact_window_reaches_workers_only
 test_non_claude_harness_ignores_claude_permission_mode
 test_non_claude_harness_ignores_config_dir
 test_claude_task_launch_carries_control_channel_authority
