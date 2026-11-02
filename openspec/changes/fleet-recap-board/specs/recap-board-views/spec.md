@@ -164,3 +164,14 @@ WHEN the reader clicks the badge, the page SHALL show the newest iteration and c
 - **WHEN** the reader clicks "Iteration 4 arrived"
 - **THEN** the page shows iteration 4 of 4 and the badge is gone, including after a later reload
 
+### Requirement: Blocked label
+WHERE a task's current revision has blockers, the board SHALL show a "blocked" badge on the task row and in the task detail, with the blocker ids.
+WHERE a task has no blockers, the board SHALL show no blocked badge.
+
+#### Scenario: Blocked task
+- **WHEN** a task, in the main home or a secondmate home, has blocker ids
+- **THEN** its row and its detail show a "blocked" badge and "blocked by" with those ids
+
+#### Scenario: Unblocked task
+- **WHEN** a task has no blockers
+- **THEN** its row and its detail show no blocked badge

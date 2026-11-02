@@ -142,6 +142,13 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Liveness fix:** `lavish-axi` lists a live session that holds unread prompts as `feedback`. The build treats `open` and `feedback` as live, so it no longer reopens (and opens a tab for) a live board.
 - **Reason:** The Lavish session, bind and listener stay unchanged. Only the browser launch and the page's own state change.
 
+### D19. Blocked label
+- **Decision:** How does the board show a task that waits on another task?
+- **Captain's ask:** "Support the blocked label on this item on the Live board".
+- **Choice:** A task whose current revision has blockers shows a "blocked" badge on its row and in its detail panel, beside the existing "blocked by <ids>" text. A task with no blockers shows no badge. The blocker ids come from the backlog `blocked_by` field that the collection reads through tasks-axi for every home, queued, held and in-flight tasks alike.
+- **Rejected recommendation:** None recorded.
+- **Reason:** The small "blocked by" line was easy to miss. A badge in the row's badge group gives the captain the same scan cue as the state and waiting badges. The change records no dependency and edits no backlog.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.

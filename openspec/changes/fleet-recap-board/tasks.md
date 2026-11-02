@@ -64,3 +64,8 @@
 
 - [x] 10.1 Scroll the panel with PageUp and PageDown outside editable fields, remove Home and End panel scrolling, and leave every key in a field native
 - [x] 10.2 Add render-harness tests for Home and End in the comment field, page keys outside a field, and page keys in the field
+
+## 11. Blocked label (D19)
+
+- [x] 11.1 Show a "blocked" badge and the blocker ids on the row and in the detail of every task whose revision has blockers
+- [x] 11.2 Add render-harness tests for a blocked task, an unblocked task, and a secondmate-home task with blockers

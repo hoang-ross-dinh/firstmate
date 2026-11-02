@@ -499,10 +499,12 @@ __FM_BEARINGS_BOARD_DATA__
     var main = el("div", "");
     main.appendChild(el("div", "rb-row__title", r.rev.title));
     if (r.rev.summary) main.appendChild(el("div", "rb-row__sub", r.rev.summary));
+    if (r.rev.blockers) main.appendChild(el("div", "rb-row__sub", "blocked by " + r.rev.blockers));
     main.appendChild(el("div", "rb-row__mark", mark(r.rev, st.iter) + " - " + r.rev.home + (r.rev.repo ? " - " + r.rev.repo : "")));
     row.appendChild(main);
     var badges = el("div", "rb-row__badges");
     if (r.rev.waiting) badges.appendChild(badge("warn", "waiting on you"));
+    if (r.rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge(r.rev.state === "done" ? "neutral" : r.rev.state === "in_flight" ? "online" : "info", r.rev.state));
     if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
     row.appendChild(badges);
@@ -691,6 +693,7 @@ __FM_BEARINGS_BOARD_DATA__
     var top = el("section", "fm-card rb-panel");
     var badges = el("div", "rb-row__badges");
     badges.appendChild(badge("info", rev.state));
+    if (rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge("neutral", rev.home));
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
     if (rev.theme) badges.appendChild(badge("solid", rev.theme));

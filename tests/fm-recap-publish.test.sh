@@ -671,6 +671,46 @@ test_a_secondmate_card_offers_answer_buttons_and_names_who_acts() {
   pass "a secondmate card offers answer buttons, names who acts, and queues a relayed answer"
 }
 
+test_a_blocked_task_shows_a_blocked_badge_and_its_blockers_and_an_unblocked_task_shows_none() {
+  local home board out
+  home=$(make_home blocked-badge)
+  {
+    entry 1 '["a","b"]' "{
+      \"a\": $(rev a queued "Task A" '{"blockers":"dep-1,dep-2"}'),
+      \"b\": $(rev b queued "Task B")}"
+  } > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "blocked")) | length == 1' >/dev/null \
+    || fail "exactly the blocked task did not get one blocked badge: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | all_text | grep -q 'blocked by dep-1,dep-2' || fail "the row did not name the blocker ids"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "blocked")) | length == 2' >/dev/null \
+    || fail "the detail panel did not show the blocked badge"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row__sub")) | .text] | map(select(. == "blocked by dep-1,dep-2")) | length == 2' >/dev/null \
+    || fail "the detail panel did not show the blocker ids"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "blocked")) | length == 1' >/dev/null \
+    || fail "an unblocked task detail showed a blocked badge beyond task A's row"
+  pass "a blocked task shows a blocked badge and its blocker ids in the row and the detail, and an unblocked task shows none"
+}
+
+test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge() {
+  local home board out
+  home=$(make_home blocked-mate)
+  {
+    entry 1 '["pm:x","pm:y"]' "{
+      \"pm:x\": $(rev pm:x queued "Mate queued task" '{"blockers":"pm-dep"}'),
+      \"pm:y\": $(rev pm:y queued "Mate held task" '{"blockers":"pm-dep","held":true,"hold_kind":"external","hold_reason":"wait"}')}"
+  } > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "blocked")) | length == 2' >/dev/null \
+    || fail "a secondmate-home task with blockers did not show the blocked badge: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | all_text | grep -q 'blocked by pm-dep' || fail "the secondmate-home row did not name its blocker"
+  pass "a secondmate-home task with blockers shows the blocked badge, queued or held"
+}
+
 test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box() {
   local home board out
   home=$(make_home main-card)
@@ -851,6 +891,8 @@ fm_test_run \
   test_a_main_home_hold_queues_its_answer_for_the_captain_hold_intake \
   test_a_secondmate_card_offers_answer_buttons_and_names_who_acts \
   test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box \
+  test_a_blocked_task_shows_a_blocked_badge_and_its_blockers_and_an_unblocked_task_shows_none \
+  test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge \
   test_merge_and_dispatch_buttons_reuse_the_existing_routes \
   test_a_comment_queues_with_the_question_markup_and_shows_its_reply \
   test_a_comment_reply_renders_under_its_comment
