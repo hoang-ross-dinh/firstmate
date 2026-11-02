@@ -126,6 +126,13 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Rejected recommendation:** None recorded.
 - **Reason:** The captain reads the board top down, so the most urgent items must come first. The emoji already carries priority in the chat Recap, so no new field is needed.
 
+### D16. Task detail as a slide-in panel
+- **Decision:** How does the board show a task's detail?
+- **Captain's ask:** "Can we make the details view as a slide in rather than a page switch, problem is - I need to scroll up to click "Back to Iteration X" - When I'm back on the Iteration view, it starts on the top of the page, I need to find the previous scroll location to scan the next item".
+- **Captain's choices:** Panel shape: "Right side, wide (~70%)", with only a strip of the list visible and the full width on a narrow screen. Close: "Close button pinned on top, Esc key", with the close button visible while the panel scrolls and the list keeping its scroll position. Next and previous item inside the panel: "No, close and reopen".
+- **Rejected recommendation:** None recorded.
+- **Reason:** The list stays rendered behind the panel, so opening and closing never moves the list. The panel header holds the close button, so the captain never scrolls to find it. A reload starts with the panel closed, because the open task is not stored.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.

@@ -46,3 +46,9 @@
 
 - [x] 7.1 Order rows by emoji priority and theme groups by their best row priority in every view that groups rows
 - [x] 7.2 Add a test for the group order and the row order
+
+## 8. Task detail slide-in panel (D16)
+
+- [x] 8.1 Show the task detail in a right-side panel over the list, about 70% wide and full width on a narrow screen, with a pinned header and a close button
+- [x] 8.2 Close with the close button or the Esc key, remove the "Back to iteration" link, and keep the list rendered and unscrolled
+- [x] 8.3 Add render-harness tests for the open, close, Esc, header, back-link removal, and closed-on-load behaviors

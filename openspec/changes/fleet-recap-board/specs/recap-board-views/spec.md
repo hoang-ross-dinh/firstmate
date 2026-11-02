@@ -63,6 +63,32 @@ WHEN a note changed, the task history SHALL offer a diff of the old and new note
 - **WHEN** a revision changed the note text
 - **THEN** the history offers a diff of the old and new note
 
+### Requirement: Task detail panel
+WHEN the captain opens a task, the board SHALL show the task detail in a panel that slides in from the right over the iteration list.
+The panel SHALL cover about 70% of the viewport width, and the full width on a narrow screen.
+WHILE the panel is open, the board SHALL keep the iteration list rendered behind it.
+WHEN the captain opens or closes the panel, the board SHALL keep the list scroll position.
+The panel SHALL scroll on its own, and its header with the task title and a close button SHALL stay at the top of the panel.
+WHEN the captain presses the close button or the Esc key, the board SHALL close the panel.
+The task detail SHALL NOT show a "Back to iteration" link, and the panel SHALL NOT offer next or previous task navigation.
+WHEN the page loads, the board SHALL show the panel closed.
+
+#### Scenario: Open keeps the list position
+- **WHEN** the captain scrolls the list down and opens a task
+- **THEN** the panel slides in and the list stays at the same scroll position behind it
+
+#### Scenario: Close returns to the same place
+- **WHEN** the captain closes the panel with the close button or the Esc key
+- **THEN** the list is still at the scroll position it had before the panel opened
+
+#### Scenario: Close button stays in reach
+- **WHEN** the captain scrolls to the end of a long task detail
+- **THEN** the close button is still visible in the panel header
+
+#### Scenario: Reload
+- **WHEN** the board rebuilds or the page reloads while the panel is open
+- **THEN** the page shows the iteration list with the panel closed
+
 ### Requirement: Display window
 The board SHALL show the last 30 iterations of a task's history in full, and each older revision as one line.
 

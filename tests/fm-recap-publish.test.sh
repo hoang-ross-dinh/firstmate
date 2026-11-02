@@ -447,6 +447,61 @@ test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs() {
   pass "the task detail shows newest-first history with field changes and a note diff"
 }
 
+test_a_task_detail_opens_as_a_panel_over_the_list_without_moving_the_list() {
+  local home board out rows
+  home=$(make_home panel-open)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  rows=$(render "$board" | jq '[.nodes[] | select(.attrs["data-task"] != null)] | length')
+  out=$(render "$board" '[{"scroll":600},{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == "" and .scrollY == 600' >/dev/null     || fail "opening a task moved the list scroll position: $out"
+  printf '%s' "$out" | jq -e --argjson rows "$rows" '
+    ([.nodes[] | select(.attrs.id == "rb-panel") | .hidden] == [false])
+    and ([.nodes[] | select(.attrs["data-task"] != null)] | length) == $rows
+    and ([.nodes[] | select(.cls | test("rb-drawer__head")) | .text] | any(test("Task A")))' >/dev/null     || fail "the task did not open in a panel beside the still-rendered list"
+  pass "a task detail opens as a panel over the list and leaves the list scroll position alone"
+}
+
+test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll() {
+  local home board out
+  home=$(make_home panel-close)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"scroll":600},{"click":{"attr":"data-task","value":"a"}},{"click":{"attr":"data-close","value":"1"}}]')
+  printf '%s' "$out" | jq -e '.error == "" and .scrollY == 600 and ([.nodes[] | select(.attrs.id == "rb-panel") | .hidden] == [true])' >/dev/null     || fail "the close button did not close the panel or moved the list: $out"
+  out=$(render "$board" '[{"scroll":600},{"click":{"attr":"data-task","value":"a"}},{"key":"Escape"}]')
+  printf '%s' "$out" | jq -e '.error == "" and .scrollY == 600 and ([.nodes[] | select(.attrs.id == "rb-panel") | .hidden] == [true])' >/dev/null     || fail "Escape did not close the panel or moved the list: $out"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}},{"click":{"attr":"data-close","value":"1"}},{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-drawer__head")) | .text] | any(test("Task B"))' >/dev/null     || fail "a task could not be opened again after closing"
+  pass "the panel closes with its close button or Escape and the list keeps its scroll position"
+}
+
+test_the_panel_header_pins_the_title_and_close_button_and_the_back_link_is_gone() {
+  local home board out
+  home=$(make_home panel-head)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-drawer__head")) | .text] | any(test("Task A") and test("Close$"))' >/dev/null     || fail "the panel header did not hold the title and the close button"
+  printf '%s' "$out" | jq -e '
+    ([.nodes[] | select(.attrs["data-back"] != null)] | length) == 0
+    and ([.nodes[] | select(.text | test("^Back to"))] | length) == 0' >/dev/null     || fail "the Back to iteration link is still on the detail view"
+  pass "the panel header pins the title and close button, and the Back to iteration link is gone"
+}
+
+test_a_freshly_loaded_board_starts_with_the_panel_closed_and_the_list_rendered() {
+  local home board out
+  home=$(make_home panel-reload)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '
+    .error == ""
+    and ([.nodes[] | select(.attrs.id == "rb-panel") | .hidden] == [true])
+    and ([.nodes[] | select(.attrs["data-task"] != null)] | length) > 0' >/dev/null     || fail "a fresh load did not start with the panel closed and the list shown: $out"
+  pass "a freshly loaded board starts with the panel closed and the list rendered"
+}
+
 test_a_jira_key_links_only_through_the_private_base_setting() {
   local home board out base='https://jira.example.test/browse/'
   home=$(make_home jira)
@@ -685,6 +740,10 @@ fm_test_run \
   test_the_captain_can_move_between_iterations \
   test_a_finished_task_stays_three_iterations_then_hides_but_remains_reachable \
   test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs \
+  test_a_task_detail_opens_as_a_panel_over_the_list_without_moving_the_list \
+  test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll \
+  test_the_panel_header_pins_the_title_and_close_button_and_the_back_link_is_gone \
+  test_a_freshly_loaded_board_starts_with_the_panel_closed_and_the_list_rendered \
   test_a_jira_key_links_only_through_the_private_base_setting \
   test_warnings_have_their_own_section_and_never_count_as_work \
   test_a_main_home_hold_queues_its_answer_for_the_captain_hold_intake \

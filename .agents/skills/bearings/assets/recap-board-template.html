@@ -183,12 +183,32 @@ a { color: inherit; text-decoration: none; }
 .rb-comment { border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); }
 .rb-reply { margin: 6px 0 0 16px; padding-left: 10px; border-left: 3px solid var(--sea-500); }
 .rb-warn { padding: 10px 14px; display: flex; gap: 12px; align-items: baseline; }
+/* Task detail: a panel that slides in from the right over the list. The list is
+   never rebuilt on open or close, so it keeps its scroll position. */
+.rb-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: 70vw;
+  display: flex; flex-direction: column;
+  background: var(--bg-page); background-image: var(--texture-paper);
+  border-left: 2px solid var(--ink-900); box-shadow: -6px 0 0 rgba(36, 28, 20, 0.12);
+  animation: rb-slide-in 180ms ease-out;
+}
+.rb-drawer[hidden] { display: none; }
+.rb-drawer__head {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 22px; background: var(--surface-card-warm); border-bottom: 1px solid var(--border-default);
+}
+.rb-drawer__head h3 { margin: 0; font-size: var(--fs-h4); color: var(--text-strong); }
+.rb-drawer__body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 18px 22px 48px; }
+@keyframes rb-slide-in { from { transform: translateX(100%); } to { transform: none; } }
+@media (max-width: 720px) { .rb-drawer { width: 100vw; } }
+@media (prefers-reduced-motion: reduce) { .rb-drawer { animation: none; } }
 </style>
 </head>
 
 <body>
 <header class="rb-nav"><div class="rb-nav__inner" id="rb-nav"></div></header>
 <main class="rb-main" id="rb-app"></main>
+<aside class="rb-drawer" id="rb-panel" role="dialog" aria-label="Task detail" hidden></aside>
 
 <script id="bearings-data" type="application/json">
 __FM_BEARINGS_BOARD_DATA__
@@ -371,6 +391,8 @@ __FM_BEARINGS_BOARD_DATA__
 
   var nav = document.getElementById("rb-nav");
   var app = document.getElementById("rb-app");
+  var drawer = document.getElementById("rb-panel");
+  var openRow = null;
 
   function renderNav() {
     clear(nav);
@@ -418,7 +440,7 @@ __FM_BEARINGS_BOARD_DATA__
       var count = rowsFor(st.iter, f[0]).length;
       var chip = el("button", "rb-chip" + (st.filter === f[0] ? " is-active" : ""), f[1] + " (" + count + ")");
       chip.type = "button"; chip.setAttribute("data-filter", f[0]);
-      chip.addEventListener("click", function () { st.filter = f[0]; render(); });
+      chip.addEventListener("click", function () { st.filter = f[0]; renderBoard(); });
       chips.appendChild(chip);
     });
     app.appendChild(chips);
@@ -450,7 +472,7 @@ __FM_BEARINGS_BOARD_DATA__
     badges.appendChild(badge(r.rev.state === "done" ? "neutral" : r.rev.state === "in_flight" ? "online" : "info", r.rev.state));
     if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
     row.appendChild(badges);
-    row.addEventListener("click", function () { st.task = r.task.key; render(); });
+    row.addEventListener("click", function () { openRow = row; openTask(r.task.key); });
     return row;
   }
 
@@ -620,43 +642,65 @@ __FM_BEARINGS_BOARD_DATA__
   }
 
   function renderDetail(task) {
-    clear(app);
+    clear(drawer);
     var rev = asOf(task, st.iter) || task.revisions[0];
-    var back = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Back to iteration " + st.iter);
-    back.type = "button"; back.setAttribute("data-back", "1");
-    back.addEventListener("click", function () { st.task = null; render(); });
-    app.appendChild(back);
-    var box = el("div", "rb-detail");
-    var head = el("section", "fm-card rb-panel");
+    var head = el("div", "rb-drawer__head");
     head.appendChild(el("h3", "", (rev.emoji ? rev.emoji + " " : "") + rev.title));
+    var close = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Close");
+    close.type = "button"; close.setAttribute("data-close", "1");
+    close.addEventListener("click", closeTask);
+    head.appendChild(close);
+    drawer.appendChild(head);
+    var body = el("div", "rb-drawer__body");
+    var box = el("div", "rb-detail");
+    var top = el("section", "fm-card rb-panel");
     var badges = el("div", "rb-row__badges");
     badges.appendChild(badge("info", rev.state));
     badges.appendChild(badge("neutral", rev.home));
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
     if (rev.theme) badges.appendChild(badge("solid", rev.theme));
-    head.appendChild(badges);
-    if (rev.summary) head.appendChild(el("div", "", rev.summary));
-    if (rev.blockers) head.appendChild(el("div", "rb-row__sub", "blocked by " + rev.blockers));
+    top.appendChild(badges);
+    if (rev.summary) top.appendChild(el("div", "", rev.summary));
+    if (rev.blockers) top.appendChild(el("div", "rb-row__sub", "blocked by " + rev.blockers));
     var links = el("div", "rb-links");
     if (rev.pr_url) links.appendChild(link(rev.pr_url, rev.pr_url));
     if (rev.issue_url) links.appendChild(link(rev.issue_url, rev.issue_url));
     jiraKeys(rev.title + " " + (rev.note || "")).forEach(function (k) { links.appendChild(JIRA_BASE ? link(JIRA_BASE + k, k) : el("span", "", k)); });
-    head.appendChild(links);
-    box.appendChild(head);
+    top.appendChild(links);
+    box.appendChild(top);
     if (rev.waiting) holdAnswer(box, task, rev);
     actions(box, task, rev);
     commentBox(box, task);
     commentThread(box, task);
     history(box, task);
-    app.appendChild(box);
+    body.appendChild(box);
+    drawer.appendChild(body);
+    drawer.hidden = false;
+    close.focus({ preventScroll: true });
   }
 
-  function render() {
-    renderNav();
+  function openTask(key) { st.task = key; renderPanel(); }
+  function closeTask() {
+    st.task = null;
+    renderPanel();
+    if (openRow) openRow.focus({ preventScroll: true });
+    openRow = null;
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && st.task) closeTask();
+  });
+
+  /* The list and the panel render apart: opening or closing a task never rebuilds the list. */
+  function renderBoard() { renderNav(); renderList(); }
+  function renderPanel() {
     var task = null;
     if (st.task) data.tasks.forEach(function (t) { if (t.key === st.task) task = t; });
-    if (task) renderDetail(task); else renderList();
+    if (task) { renderDetail(task); return; }
+    st.task = null;
+    clear(drawer);
+    drawer.hidden = true;
   }
+  function render() { renderBoard(); renderPanel(); }
 
   render();
 })();

@@ -10,7 +10,13 @@
 //   { "check":  { "value": "merge" } }                     check a radio
 //   { "fill":   { "name": "comment", "value": "hello" } }  set a field value
 //   { "submit": { "question": "t1" } }                     submit a question form
-// Prints one JSON document: { nodes, queued, error }.
+//   { "key":    "Escape" }                                 press a key on the document
+//   { "scroll": 600 }                                      set the page scroll position
+// Prints one JSON document: { nodes, queued, scrollY, error }.
+//   scrollY page scroll position. The shim resets it to 0 whenever the list
+//           container is cleared, a conservative stand-in for a browser clamping
+//           the scroll when page content shrinks, so a test that sees it kept
+//           knows the list was never rebuilt.
 //   nodes   flat list of {tag, cls, text, attrs, hidden, disabled} in document order
 //   queued  every window.lavish.queuePrompt call: {summary, tag, text, data, question}
 import { readFileSync } from "node:fs";
@@ -37,7 +43,11 @@ class Node {
   get textContent() {
     return this.children.length ? this.children.map((c) => c.textContent).join("") : this._text;
   }
-  set textContent(v) { this._text = String(v); this.children = []; }
+  set textContent(v) {
+    this._text = String(v); this.children = [];
+    if (this.onClear) this.onClear();
+  }
+  focus() {}
   appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
@@ -58,14 +68,23 @@ dataNode.textContent = html
   .split('<script id="bearings-data" type="application/json">')[1]
   .split("</script>")[0];
 byId.set("bearings-data", dataNode);
-for (const id of ["rb-nav", "rb-app"]) byId.set(id, new Node("div"));
+for (const id of ["rb-nav", "rb-app", "rb-panel"]) {
+  const n = new Node("div");
+  n.setAttribute("id", id);
+  byId.set(id, n);
+}
+byId.get("rb-panel").hidden = true; // the template markup ships the panel closed
+byId.get("rb-app").onClear = () => { window.scrollY = 0; };
+const keyListeners = [];
 
 const queued = [];
 globalThis.document = {
   createElement: (tag) => new Node(tag),
   getElementById: (id) => byId.get(id) ?? new Node("div"),
+  addEventListener: (type, fn) => { if (type === "keydown") keyListeners.push(fn); },
 };
 globalThis.window = {
+  scrollY: 0,
   lavish: {
     queuePrompt: (summary, opts) =>
       queued.push({
@@ -83,11 +102,15 @@ const script = html.slice(html.indexOf("<script>") + "<script>".length, html.las
 let error = "";
 try {
   new Function(script)();
-  const roots = () => [byId.get("rb-nav"), byId.get("rb-app")].flatMap((r) => all(r));
+  const roots = () => ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id)));
   for (const a of actions) {
     const [kind, arg] = Object.entries(a)[0];
     const nodes = roots();
-    if (kind === "click") {
+    if (kind === "key") {
+      keyListeners.forEach((fn) => fn({ key: arg, preventDefault() {} }));
+    } else if (kind === "scroll") {
+      window.scrollY = arg;
+    } else if (kind === "click") {
       const n = nodes.find((x) =>
         arg.attr ? x.attributes[arg.attr] === arg.value : x.textContent === arg.text && !x.children.length);
       if (!n) throw new Error("no node to click: " + JSON.stringify(arg));
@@ -110,7 +133,7 @@ try {
   error = String(e && e.message ? e.message : e);
 }
 
-const nodes = [byId.get("rb-nav"), byId.get("rb-app")].flatMap((r) => all(r)).map((n) => ({
+const nodes = ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id))).map((n) => ({
   tag: n.tagName,
   cls: n.className,
   text: n.textContent,
@@ -118,4 +141,4 @@ const nodes = [byId.get("rb-nav"), byId.get("rb-app")].flatMap((r) => all(r)).ma
   hidden: n.hidden,
   disabled: n.disabled,
 }));
-process.stdout.write(JSON.stringify({ nodes, queued, error }) + "\n");
+process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, error }) + "\n");
