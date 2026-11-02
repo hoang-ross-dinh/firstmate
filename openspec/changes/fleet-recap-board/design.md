@@ -167,3 +167,11 @@ These choices serve the decisions above and are the implementer's, not the capta
 ## Open Questions
 
 None blocking. The grill left the Jira choice open, and the captain later decided there is no Jira ticket.
+
+### D18. Panel keyboard scrolling
+- **Decision:** Which keys scroll the task detail panel?
+- **Captain's ask:** "The Home/End button does not work in the Comment textbox, it works for scrolling the detail panel (I do not like that). Use the page up/down buttom for the details panel scrolling".
+- **Options:** None offered. The ask names the keys.
+- **Captain's choice:** PageUp and PageDown scroll the open panel, and only when focus is outside an editable field. Home, End and every other editing key keep their native behavior, and the board binds no scroll to Home or End.
+- **Rejected recommendation:** None recorded.
+- **Reason:** A text field needs Home and End to move the caret. The board keeps every key in a field away from any panel scroll binding.

@@ -59,3 +59,8 @@
 - [x] 9.2 Restore the iteration, filter, open task and scroll after a reload, and show the "Iteration N arrived" badge
 - [x] 9.3 Add tests for no-open, the `feedback` listing, place restore, and the badge show, click and clear
 
+
+## 10. Panel keyboard scrolling (D18)
+
+- [x] 10.1 Scroll the panel with PageUp and PageDown outside editable fields, remove Home and End panel scrolling, and leave every key in a field native
+- [x] 10.2 Add render-harness tests for Home and End in the comment field, page keys outside a field, and page keys in the field

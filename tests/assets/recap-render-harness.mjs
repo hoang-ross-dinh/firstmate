@@ -15,8 +15,10 @@
 //   { "fill":   { "name": "comment", "value": "hello" } }  set a field value
 //   { "submit": { "question": "t1" } }                     submit a question form
 //   { "key":    "Escape" }                                 press a key on the document
+//   { "keyin":  { "key": "Home", "name": "comment" } }     press a key with a named field focused; records it in keys
 //   { "scroll": 600 }                                      set the page scroll position, firing scroll listeners
-// Prints one JSON document: { nodes, queued, scrollY, error }.
+// Prints one JSON document: { nodes, queued, scrollY, keys, error }.
+//   keys    one {key, field, prevented, stopped} per key action; nodes carry scrollTop (the shim's clientHeight is 1000)
 //   scrollY page scroll position. The shim resets it to 0 whenever the list
 //           container is cleared, a conservative stand-in for a browser clamping
 //           the scroll when page content shrinks, so a test that sees it kept
@@ -44,6 +46,8 @@ class Node {
     this.value = "";
     this.checked = false;
     this.parentNode = null;
+    this.scrollTop = 0;
+    this.clientHeight = 1000;
   }
   get textContent() {
     return this.children.length ? this.children.map((c) => c.textContent).join("") : this._text;
@@ -91,6 +95,12 @@ const sessionStorage = {
 };
 const scrollListeners = [];
 let scrolledTo = null;
+const keys = [];
+const press = (key, target) => {
+  const rec = { key, field: target ? target.name : "", prevented: false, stopped: false };
+  keys.push(rec);
+  keyListeners.forEach((fn) => fn({ key, target, preventDefault() { rec.prevented = true; }, stopPropagation() { rec.stopped = true; } }));
+};
 globalThis.document = {
   createElement: (tag) => new Node(tag),
   getElementById: (id) => byId.get(id) ?? new Node("div"),
@@ -123,7 +133,11 @@ try {
     const [kind, arg] = Object.entries(a)[0];
     const nodes = roots();
     if (kind === "key") {
-      keyListeners.forEach((fn) => fn({ key: arg, preventDefault() {} }));
+      press(arg, null);
+    } else if (kind === "keyin") {
+      const n = nodes.find((x) => x.name === arg.name);
+      if (!n) throw new Error("no field: " + JSON.stringify(arg));
+      press(arg.key, n);
     } else if (kind === "scroll") {
       window.scrollY = arg;
       scrollListeners.forEach((fn) => fn({}));
@@ -157,6 +171,7 @@ const nodes = ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id))
   attrs: n.attributes,
   hidden: n.hidden,
   disabled: n.disabled,
+  scrollTop: n.scrollTop,
 }));
 if (storagePath) writeFileSync(storagePath, JSON.stringify(Object.fromEntries(store)));
-process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, scrolledTo, error }) + "\n");
+process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, scrolledTo, keys, error }) + "\n");

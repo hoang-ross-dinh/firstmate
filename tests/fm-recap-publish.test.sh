@@ -554,6 +554,25 @@ test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll(
   pass "the panel closes with its close button or Escape and the list keeps its scroll position"
 }
 
+test_panel_page_keys_scroll_the_panel_and_leave_editing_keys_to_the_comment_field() {
+  local home board out open
+  home=$(make_home panel-keys)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  open='{"click":{"attr":"data-task","value":"a"}}'
+  out=$(render "$board" "[$open,{\"keyin\":{\"key\":\"Home\",\"name\":\"comment\"}},{\"keyin\":{\"key\":\"End\",\"name\":\"comment\"}}]")
+  printf '%s' "$out" | jq -e '.error == "" and ([.keys[] | select(.prevented)] | length) == 0 and ([.nodes[] | select(.cls | test("rb-drawer__body")) | .scrollTop] == [0])' >/dev/null \
+    || fail "Home or End in the comment field was intercepted or scrolled the panel: $out"
+  out=$(render "$board" "[$open,{\"keyin\":{\"key\":\"PageDown\",\"name\":\"comment\"}},{\"keyin\":{\"key\":\"PageUp\",\"name\":\"comment\"}}]")
+  printf '%s' "$out" | jq -e '.error == "" and ([.keys[] | select(.prevented)] | length) == 0 and ([.nodes[] | select(.cls | test("rb-drawer__body")) | .scrollTop] == [0])' >/dev/null \
+    || fail "PageUp or PageDown in the comment field was intercepted or scrolled the panel: $out"
+  out=$(render "$board" "[$open,{\"key\":\"PageDown\"},{\"key\":\"PageDown\"},{\"key\":\"PageUp\"},{\"key\":\"Home\"},{\"key\":\"End\"}]")
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.cls | test("rb-drawer__body")) | .scrollTop] == [900])
+    and ([.keys[] | select(.key == "Home" or .key == "End") | .prevented] == [false, false])' >/dev/null \
+    || fail "PageDown and PageUp did not scroll the panel by a page, or Home and End were bound: $out"
+  pass "PageUp and PageDown scroll the panel outside a field, and Home, End and the page keys stay native in the comment field"
+}
+
 test_the_panel_header_pins_the_title_and_close_button_and_the_back_link_is_gone() {
   local home board out
   home=$(make_home panel-head)
@@ -824,6 +843,7 @@ fm_test_run \
   test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs \
   test_a_task_detail_opens_as_a_panel_over_the_list_without_moving_the_list \
   test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll \
+  test_panel_page_keys_scroll_the_panel_and_leave_editing_keys_to_the_comment_field \
   test_the_panel_header_pins_the_title_and_close_button_and_the_back_link_is_gone \
   test_a_freshly_loaded_board_starts_with_the_panel_closed_and_the_list_rendered \
   test_a_jira_key_links_only_through_the_private_base_setting \

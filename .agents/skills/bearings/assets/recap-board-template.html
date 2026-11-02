@@ -420,6 +420,7 @@ __FM_BEARINGS_BOARD_DATA__
   var app = document.getElementById("rb-app");
   var drawer = document.getElementById("rb-panel");
   var openRow = null;
+  var panelBody = null;
 
   function renderNav() {
     clear(nav);
@@ -685,6 +686,7 @@ __FM_BEARINGS_BOARD_DATA__
     head.appendChild(close);
     drawer.appendChild(head);
     var body = el("div", "rb-drawer__body");
+    panelBody = body;
     var box = el("div", "rb-detail");
     var top = el("section", "fm-card rb-panel");
     var badges = el("div", "rb-row__badges");
@@ -720,9 +722,20 @@ __FM_BEARINGS_BOARD_DATA__
     if (openRow) openRow.focus({ preventScroll: true });
     openRow = null;
   }
+  function editable(t) {
+    var tag = t && t.tagName ? String(t.tagName).toLowerCase() : "";
+    return tag === "textarea" || tag === "input" || tag === "select" || !!(t && t.isContentEditable);
+  }
+  /* Capture phase: editing keys in a field stay native and never reach a scroll binding. PageUp and PageDown scroll the open panel only outside a field. */
   document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape" && st.task) closeTask();
-  });
+    var k = ev.key;
+    if (k === "Escape" && st.task) { closeTask(); return; }
+    if (k !== "PageUp" && k !== "PageDown" && k !== "Home" && k !== "End") return;
+    if (editable(ev.target)) { if (ev.stopPropagation) ev.stopPropagation(); return; }
+    if (!st.task || !panelBody || (k !== "PageUp" && k !== "PageDown")) return;
+    ev.preventDefault();
+    panelBody.scrollTop += (k === "PageDown" ? 1 : -1) * panelBody.clientHeight * 0.9;
+  }, true);
 
   /* The list and the panel render apart: opening or closing a task never rebuilds the list. */
   function renderBoard() {

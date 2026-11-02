@@ -72,6 +72,9 @@ The panel SHALL scroll on its own, and its header with the task title and a clos
 WHEN the captain presses the close button or the Esc key, the board SHALL close the panel.
 The task detail SHALL NOT show a "Back to iteration" link, and the panel SHALL NOT offer next or previous task navigation.
 WHEN the page loads, the board SHALL show the panel closed.
+WHILE the panel is open and focus is outside an editable field, WHEN the captain presses PageUp or PageDown, the board SHALL scroll the panel by about one page.
+WHILE focus is in an editable field, the board SHALL leave Home, End, PageUp, PageDown and every other editing key to the field.
+The board SHALL NOT bind Home or End to panel scrolling.
 
 #### Scenario: Open keeps the list position
 - **WHEN** the captain scrolls the list down and opens a task
@@ -88,6 +91,14 @@ WHEN the page loads, the board SHALL show the panel closed.
 #### Scenario: Reload
 - **WHEN** the board rebuilds or the page reloads while the panel is open
 - **THEN** the page shows the iteration list with the panel closed
+
+#### Scenario: Page keys scroll the panel
+- **WHEN** the captain presses PageDown or PageUp while focus is outside an editable field
+- **THEN** the panel scrolls down or up by about one page
+
+#### Scenario: Editing keys stay in the comment field
+- **WHEN** the captain presses Home, End, PageUp or PageDown in the comment field
+- **THEN** the field handles the key and the panel does not scroll
 
 ### Requirement: Display window
 The board SHALL show the last 30 iterations of a task's history in full, and each older revision as one line.
