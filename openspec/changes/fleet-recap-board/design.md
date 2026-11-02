@@ -133,6 +133,15 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Rejected recommendation:** None recorded.
 - **Reason:** The list stays rendered behind the panel, so opening and closing never moves the list. The panel header holds the close button, so the captain never scrolls to find it. A reload starts with the panel closed, because the open task is not stored.
 
+### D17. Live updates
+- **Decision:** How does a new iteration reach a board that is already open?
+- **Captain's ask:** "Can we make the page lively by pushing the iteration to the current page rather than opening a new page, it's like a spamming to me".
+- **Captain's choices:** A publish opens a browser tab "Never automatically". When the open page receives a new iteration it should "Keep place, show a badge".
+- **Choice:** Every `fm-bearings-board.sh build` call passes `--no-open` to `lavish-axi`, for the establish and the reopen call. Lavish reloads the artifact frame in full when the file changes, so the page saves its view in `sessionStorage` and restores it on load. A small "Iteration N arrived" badge shows while the reader views an older iteration than the newest.
+- **Scope of no-open:** All `build` callers, not only the recap path. The recap path and the older `/bearings lavish` path share one establish function, and a tab per build is the same spam in both. The captain opens the board from its URL.
+- **Liveness fix:** `lavish-axi` lists a live session that holds unread prompts as `feedback`. The build treats `open` and `feedback` as live, so it no longer reopens (and opens a tab for) a live board.
+- **Reason:** The Lavish session, bind and listener stay unchanged. Only the browser launch and the page's own state change.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.

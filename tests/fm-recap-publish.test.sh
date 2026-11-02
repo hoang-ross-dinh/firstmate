@@ -31,7 +31,7 @@ case "${1-}" in
   '')
     printf 'sessions[1]{file,status,url,pending_prompts}:\n'
     [ ! -s "$FM_HOME/lavish-open" ] \
-      || printf '  %s,open,"http://127.0.0.1:4387/session/0123456789abcdef",0\n' "$(cat "$FM_HOME/lavish-open")"
+      || printf '  %s,%s,"http://127.0.0.1:4387/session/0123456789abcdef",0\n' "$(cat "$FM_HOME/lavish-open")" "$(cat "$FM_HOME/lavish-listed-status" 2>/dev/null || echo open)"
     ;;
   poll)
     printf 'entered\n' > "$FM_HOME/stub-poll"
@@ -39,6 +39,7 @@ case "${1-}" in
     exit 75
     ;;
   *)
+    printf '%s\n' "$*" >> "$FM_HOME/lavish-calls"
     real=$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")
     printf '%s\n' "$real" > "$FM_HOME/lavish-open"
     jq -n --arg file "$real" \
@@ -122,12 +123,17 @@ refresh_board() {  # <home>
   printf '%s/.lavish/bearings-board.html\n' "$1"
 }
 
-# Render a built board, optionally driving it with an actions array.
-render() {  # <board> [actions-json]
-  local board=$1 actions=${2:-} file
+# Render a built board, optionally driving it with an actions array and a
+# sessionStorage file that persists between renders (a reload of the page).
+render() {  # <board> [actions-json] [storage-file]
+  local board=$1 actions=${2:-} storage=${3:-} file=-
   if [ -n "$actions" ]; then
     file=$(mktemp "$TMP_ROOT/actions.XXXXXX")
     printf '%s' "$actions" > "$file"
+  fi
+  if [ -n "$storage" ]; then
+    node "$HARNESS" "$board" "$file" "$storage" || fail "the board could not be rendered"
+  elif [ "$file" != - ]; then
     node "$HARNESS" "$board" "$file" || fail "the board could not be rendered"
   else
     node "$HARNESS" "$board" || fail "the board could not be rendered"
@@ -326,6 +332,78 @@ seed_views_log() {  # <home>
       \"b\": $(rev b queued "Task B" '{"theme":"QD","summary":"B one","held":true,"hold_kind":"captain","waiting":true,"hold_reason":"pick one","reply_terms":["go","later"],"close":"release"}'),
       \"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A two","note":"line one\nline three","pr_url":"https://example.test/pr/9","reply_terms":["merge"]}')}"
   } > "$(log_of "$home")"
+}
+
+test_a_publish_never_asks_lavish_to_open_a_browser_tab() {
+  local home
+  home=$(make_home no-open)
+  seed_views_log "$home"
+  refresh_board "$home" >/dev/null
+  write_collect "$home" '[]'
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "publish failed"
+  [ -s "$home/lavish-calls" ] || fail "the stub saw no establish call"
+  ! grep -qv -- '--no-open' "$home/lavish-calls" || fail "a build call omitted --no-open: $(cat "$home/lavish-calls")"
+  pass "refresh and publish establish the Lavish session with --no-open"
+}
+
+test_a_live_session_listed_with_unread_prompts_is_not_reopened() {
+  local home
+  home=$(make_home feedback-status)
+  seed_views_log "$home"
+  printf 'feedback\n' > "$home/lavish-listed-status"
+  refresh_board "$home" >/dev/null || fail "a feedback-status session was refused"
+  ! grep -q -- '--reopen' "$home/lavish-calls" || fail "a live feedback-status session was reopened: $(cat "$home/lavish-calls")"
+  printf 'ended\n' > "$home/lavish-listed-status"
+  ! home_run "$home" "$PUBLISH" refresh >/dev/null 2>&1 || fail "an ended-status session was accepted as live"
+  pass "a session listed as feedback is live and is not reopened, and an ended one still refuses"
+}
+
+label_of() { jq -r '[.nodes[] | select(.cls | test("rb-iter__label")) | .text][0]'; }
+badges_of() { jq -c '[.nodes[] | select(.attrs["data-new-iteration"] != null) | .text]'; }
+
+test_a_live_update_keeps_the_readers_place_and_badges_the_new_iteration() {
+  local home board storage out
+  home=$(make_home live-update)
+  seed_views_log "$home"
+  storage="$TMP_ROOT/live-update.storage"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  [ "$(printf '%s' "$out" | badges_of)" = '[]' ] || fail "a first view showed an arrival badge"
+  out=$(render "$board" '[{"click":{"attr":"data-nav","value":"prev"}},{"click":{"attr":"data-task","value":"a"}},{"scroll":240}]' "$storage")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 2 of 3" ] || fail "setup did not reach iteration 2"
+  # A publish adds iteration 4 and Lavish reloads the page: same storage, rebuilt board.
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a done "Task A" '{"theme":"LW","summary":"A done"}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" "" "$storage")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the reloaded board errored: $out"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 2 of 4" ] || fail "the reload left iteration 2: $(printf '%s' "$out" | label_of)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | any(test("Task A$"))' >/dev/null \
+    || fail "the reload dropped the open task detail"
+  [ "$(printf '%s' "$out" | jq '.scrolledTo')" = 240 ] || fail "the reload did not restore the scroll position"
+  [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "no arrival badge after the update: $(printf '%s' "$out" | badges_of)"
+  # Reloading again with nothing new keeps the badge until the newest iteration is viewed.
+  out=$(render "$board" "" "$storage")
+  [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "the badge vanished before the newest iteration was viewed"
+  # Clicking it switches to the new iteration and clears it.
+  out=$(render "$board" '[{"click":{"attr":"data-new-iteration","value":"4"}}]' "$storage")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 4 of 4" ] || fail "the badge did not switch to iteration 4"
+  [ "$(printf '%s' "$out" | badges_of)" = '[]' ] || fail "the badge stayed after viewing the newest iteration"
+  out=$(render "$board" "" "$storage")
+  [ "$(printf '%s' "$out" | badges_of)" = '[]' ] && [ "$(printf '%s' "$out" | label_of)" = "Iteration 4 of 4" ] \
+    || fail "the cleared badge returned or the view moved on reload"
+  pass "a live update keeps the view and place, badges the new iteration, and clears it once viewed"
+}
+
+test_the_board_renders_without_session_storage() {
+  local home board out
+  home=$(make_home no-storage)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.cls | test("rb-iter__label")) | .text] == ["Iteration 3 of 3"])' >/dev/null \
+    || fail "the board did not render without sessionStorage: $out"
+  pass "the board renders with no sessionStorage"
 }
 
 test_the_built_board_opens_in_explore_mode() {
@@ -733,6 +811,10 @@ fm_test_run \
   test_the_log_lives_in_gitignored_data \
   test_an_invalid_recap_publishes_nothing \
   test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_line \
+  test_a_publish_never_asks_lavish_to_open_a_browser_tab \
+  test_a_live_session_listed_with_unread_prompts_is_not_reopened \
+  test_a_live_update_keeps_the_readers_place_and_badges_the_new_iteration \
+  test_the_board_renders_without_session_storage \
   test_the_built_board_opens_in_explore_mode \
   test_the_iteration_view_groups_by_theme_and_marks_each_task \
   test_rows_and_groups_are_ordered_by_priority_emoji \

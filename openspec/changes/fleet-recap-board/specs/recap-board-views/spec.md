@@ -132,3 +132,24 @@ The board SHALL show fleet-integrity warnings in their own section, and never as
 #### Scenario: Warning placement
 - **WHEN** the snapshot reports a main-inventory gate or an unavailable secondmate home
 - **THEN** the board shows it in the warnings section and excludes it from the queued count and the dispatch action
+
+### Requirement: Live update keeps the reader's place
+WHEN Lavish reloads the board for a new publish, the page SHALL restore the viewed iteration, the filter, the open task and the scroll position when browser storage is available.
+The page SHALL render the newest iteration when storage is unavailable.
+
+#### Scenario: Reload mid-read
+- **WHEN** the reader views iteration 2 of 3 with a task open and a new publish reloads the page
+- **THEN** the page shows iteration 2 of 4 with the same task open and the same scroll position
+
+### Requirement: New iteration badge
+WHILE the reader views an iteration older than the newest and a newer iteration arrived by a live update, the page SHALL show an "Iteration N arrived" badge.
+WHEN the reader clicks the badge, the page SHALL show the newest iteration and clear the badge.
+
+#### Scenario: No badge without an arrival
+- **WHEN** the reader opens the board for the first time
+- **THEN** no badge shows
+
+#### Scenario: Badge click
+- **WHEN** the reader clicks "Iteration 4 arrived"
+- **THEN** the page shows iteration 4 of 4 and the badge is gone, including after a later reload
+

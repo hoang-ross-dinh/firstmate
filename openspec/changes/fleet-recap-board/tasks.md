@@ -52,3 +52,10 @@
 - [x] 8.1 Show the task detail in a right-side panel over the list, about 70% wide and full width on a narrow screen, with a pinned header and a close button
 - [x] 8.2 Close with the close button or the Esc key, remove the "Back to iteration" link, and keep the list rendered and unscrolled
 - [x] 8.3 Add render-harness tests for the open, close, Esc, header, back-link removal, and closed-on-load behaviors
+
+## 9. Live updates (D17)
+
+- [x] 9.1 Pass `--no-open` on every `lavish-axi` establish and reopen call in the board build, and treat a `feedback` listing as live
+- [x] 9.2 Restore the iteration, filter, open task and scroll after a reload, and show the "Iteration N arrived" badge
+- [x] 9.3 Add tests for no-open, the `feedback` listing, place restore, and the badge show, click and clear
+

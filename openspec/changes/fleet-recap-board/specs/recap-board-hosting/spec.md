@@ -53,3 +53,16 @@ The existing `bin/fm-bearings-board.sh build` payload path and its tests SHALL k
 #### Scenario: Old payload
 - **WHEN** `fm-bearings-board.sh build` receives an `fm-bearings-board.v1` payload
 - **THEN** it builds the old board exactly as before this change
+
+### Requirement: Publish never opens a browser tab
+The board build SHALL NOT ask `lavish-axi` to open a browser tab when it establishes or reopens the session.
+A session that `lavish-axi` lists as `open` or `feedback` SHALL count as live.
+
+#### Scenario: Publish with the board open
+- **WHEN** the first mate publishes or refreshes the board
+- **THEN** every `lavish-axi <board>` call passes `--no-open`
+
+#### Scenario: Unread prompts
+- **WHEN** the live session is listed as `feedback`
+- **THEN** the build treats it as live and does not reopen it
+

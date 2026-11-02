@@ -252,7 +252,8 @@ lavish_status_field() {  # <lavish-axi output>
 }
 
 # The server's own listing, keyed on the canonical artifact path. Rows are
-# `<file>,<status>,"<url>",<pending>`, and only a live session is listed `open`.
+# `<file>,<status>,"<url>",<pending>`. A live session is listed `open`, or `feedback`
+# while it holds unread prompts (lavish-axi 0.1.96); an ended one is neither.
 lavish_session_listed_open() {  # <canonical-board-path>
   local listing
   listing=$(lavish-axi 2>/dev/null) || return 1
@@ -261,7 +262,7 @@ lavish_session_listed_open() {  # <canonical-board-path>
     index(line, path ",") == 1 {
       rest = substr(line, length(path) + 2)
       split(rest, field, ",")
-      if (field[1] == "open") { found = 1 }
+      if (field[1] == "open" || field[1] == "feedback") { found = 1 }
     }
     END { exit found ? 0 : 1 }
   '
@@ -271,6 +272,10 @@ lavish_board_live() {  # <establish output> <canonical-board-path>
   lavish_session_listed_open "$2"
 }
 
+# Neither call opens a browser tab (`--no-open`): a build runs on every publish,
+# and a tab per publish is spam. An open page reloads itself when the board file
+# changes, and the captain opens the board from its URL.
+#
 # Establish the board session and PROVE it is live before anything arms a poll
 # on it. A session the captain ended is reopened once - the captain asked for
 # this board, which is exactly the attention `--reopen` exists for - and a
@@ -280,13 +285,13 @@ establish_board_session() {  # <board>
   local board=$1 real out status version
   BOARD_SESSION_REOPENED=0
   real=$(board_realpath "$board") || fail "cannot resolve the board path: $board"
-  out=$(lavish-axi "$board") || fail "cannot establish the board Lavish session"
+  out=$(lavish-axi "$board" --no-open) || fail "cannot establish the board Lavish session"
   printf '%s\n' "$out"
   if lavish_board_live "$out" "$real"; then
     printf 'session: live\n'
     return 0
   fi
-  out=$(lavish-axi "$board" --reopen) || fail "cannot reopen the ended board Lavish session"
+  out=$(lavish-axi "$board" --no-open --reopen) || fail "cannot reopen the ended board Lavish session"
   printf '%s\n' "$out"
   if lavish_board_live "$out" "$real"; then
     BOARD_SESSION_REOPENED=1
