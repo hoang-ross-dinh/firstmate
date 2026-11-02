@@ -41,3 +41,8 @@
 - [x] 6.2 Carry a secondmate answer through the comment route with `kind: "answer"` and an answer-tagged inbox note
 - [x] 6.3 Show relayed answers and their replies in the task thread
 - [x] 6.4 Add tests for both card kinds, the relayed note fields, and repeated delivery
+
+## 7. Priority order (D15)
+
+- [x] 7.1 Order rows by emoji priority and theme groups by their best row priority in every view that groups rows
+- [x] 7.2 Add a test for the group order and the row order

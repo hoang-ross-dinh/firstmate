@@ -355,6 +355,26 @@ test_the_iteration_view_groups_by_theme_and_marks_each_task() {
   pass "the iteration view groups tasks by theme and marks new or unchanged since iteration N"
 }
 
+test_rows_and_groups_are_ordered_by_priority_emoji() {
+  local home board out red=$'\xF0\x9F\x94\xB4' yel=$'\xF0\x9F\x9F\xA1' grn=$'\xF0\x9F\x9F\xA2'
+  home=$(make_home priority)
+  {
+    entry 1 '["a","b","c","d","e"]' "{
+      \"a\": $(rev a queued "Task A" "{\"theme\":\"AA\",\"emoji\":\"$grn\"}"),
+      \"b\": $(rev b queued "Task B" "{\"theme\":\"ZZ\",\"emoji\":\"$grn\"}"),
+      \"c\": $(rev c queued "Task C" "{\"theme\":\"ZZ\",\"emoji\":\"$red\"}"),
+      \"d\": $(rev d queued "Task D" "{\"theme\":\"ZZ\",\"emoji\":\"$yel\"}"),
+      \"e\": $(rev e queued "Task E" '{"theme":"MM"}')}"
+  } > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-group__code")) | .text] == ["ZZ", "AA", "MM"]' >/dev/null \
+    || fail "the groups were not ordered by best priority: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.attrs["data-task"] != null) | .attrs["data-task"]] == ["c","d","b","a","e"]' >/dev/null \
+    || fail "the rows were not ordered by priority inside their groups"
+  pass "rows and theme groups are ordered by priority emoji from high to low"
+}
+
 test_the_filters_narrow_the_iteration_view() {
   local home board out
   home=$(make_home filters)
@@ -660,6 +680,7 @@ fm_test_run \
   test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_line \
   test_the_built_board_opens_in_explore_mode \
   test_the_iteration_view_groups_by_theme_and_marks_each_task \
+  test_rows_and_groups_are_ordered_by_priority_emoji \
   test_the_filters_narrow_the_iteration_view \
   test_the_captain_can_move_between_iterations \
   test_a_finished_task_stays_three_iterations_then_hides_but_remains_reachable \

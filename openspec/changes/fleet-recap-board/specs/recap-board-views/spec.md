@@ -12,6 +12,22 @@ The iteration view SHALL mark each task as new in this iteration or unchanged si
 - **WHEN** a task has a revision from the shown iteration, or last changed in iteration 5
 - **THEN** the board marks it "new in this iteration" or "unchanged since iteration 5"
 
+### Requirement: Priority order
+The board SHALL order rows by priority from high to low, where the emoji red is high, yellow is medium, green is low, and any other or empty emoji is lowest.
+The board SHALL order theme groups by the highest priority among their visible rows.
+
+#### Scenario: Row order
+- **WHEN** a theme group holds a green row, a red row, and a yellow row
+- **THEN** the board lists the red row first, the yellow row second, and the green row last
+
+#### Scenario: Group order
+- **WHEN** a theme group named QD holds a red row and a theme group named LW holds only green rows
+- **THEN** the board lists QD before LW
+
+#### Scenario: Ties keep the earlier order
+- **WHEN** two rows share a priority
+- **THEN** the board lists a waiting-on-you row first and then orders by title, and groups with equal priority stay alphabetical with "misc" last
+
 ### Requirement: Iteration view filters
 The iteration view SHALL offer the filters Open, Changed in this iteration, Waiting on you, and All.
 

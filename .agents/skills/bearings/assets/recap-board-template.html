@@ -275,20 +275,28 @@ __FM_BEARINGS_BOARD_DATA__
     });
     return rows;
   }
+  /* priority is the row emoji: red 0, yellow 1, green 2, anything else last */
+  function rank(r) {
+    var i = ["\uD83D\uDD34", "\uD83D\uDFE1", "\uD83D\uDFE2"].indexOf(r.rev.emoji || "");
+    return i < 0 ? 3 : i;
+  }
   function groupRows(rows) {
-    var by = {}, order = [];
+    var by = {}, order = [], best = {};
     rows.forEach(function (r) {
       var code = r.rev.theme || "misc";
-      if (!by[code]) { by[code] = []; order.push(code); }
+      if (!by[code]) { by[code] = []; order.push(code); best[code] = 3; }
       by[code].push(r);
+      best[code] = Math.min(best[code], rank(r));
     });
     order.sort(function (a, b) {
+      if (best[a] !== best[b]) return best[a] - best[b];
       if (a === "misc") return 1;
       if (b === "misc") return -1;
       return a < b ? -1 : a > b ? 1 : 0;
     });
     return order.map(function (code) {
       by[code].sort(function (a, b) {
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
         if (!!b.rev.waiting !== !!a.rev.waiting) return b.rev.waiting ? 1 : -1;
         return a.rev.title < b.rev.title ? -1 : a.rev.title > b.rev.title ? 1 : 0;
       });

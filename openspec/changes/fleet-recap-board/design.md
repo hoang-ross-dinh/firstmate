@@ -118,6 +118,14 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Rejected recommendation:** None recorded. A was rejected because it keeps the gap. C stays a possible later follow-up, because it needs owner-aware routing in the keyed-answer intake.
 - **Reason:** The captain wants the board to carry every answer. The existing comment route already reaches the first mate with a request id, so B adds no decision store and writes into no secondmate home.
 
+### D15. Priority order
+- **Decision:** In what order does the board list items?
+- **Captain's ask:** "I want it to order items with their Priority from High to Low".
+- **Options:** None offered. The ask names the order.
+- **Captain's choice:** Priority is the item's emoji: red is high, yellow is medium, green is low, and any other or empty emoji is last. Rows inside a theme group sort by priority first, then waiting-on-you first, then title. Theme groups sort by the best priority among their visible rows, then alphabetically with "misc" last.
+- **Rejected recommendation:** None recorded.
+- **Reason:** The captain reads the board top down, so the most urgent items must come first. The emoji already carries priority in the chat Recap, so no new field is needed.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.
