@@ -34,3 +34,10 @@
 - [x] 5.1 Update `.agents/skills/bearings/SKILL.md` and the relevant docs so `/bearings lavish` publishes through the new command and the chat carries one line
 - [x] 5.2 Confirm no new port, no `0.0.0.0` or `::` bind, and no tunnel appear in the change
 - [x] 5.3 Run `bin/fm-lint.sh`, `bin/fm-doc-audience-check.sh`, and the bearings and procevent tests, and report the results
+
+## 6. Answers on secondmate cards (D14)
+
+- [ ] 6.1 Show reply-term answer buttons and the owning-home line on secondmate waiting cards, and remove the "answer in chat" text
+- [ ] 6.2 Carry a secondmate answer through the comment route with `kind: "answer"` and an answer-tagged inbox note
+- [ ] 6.3 Show relayed answers and their replies in the task thread
+- [ ] 6.4 Add tests for both card kinds, the relayed note fields, and repeated delivery

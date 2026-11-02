@@ -57,9 +57,35 @@ WHERE a task is queued, the board SHALL offer a dispatch button that sends the e
 - **WHEN** a main-home task is queued and not a warning
 - **THEN** the board offers a dispatch button that sends the `dispatch.charted` route with that task id
 
-### Requirement: Answer in chat for unrouted holds
-WHERE a hold belongs to a secondmate home without a working answer route, the board SHALL show "answer in chat" instead of answer buttons.
+### Requirement: Answer buttons on every waiting card
+WHILE a task waits on the captain, the board SHALL show each of its reply terms as an answer button and a comment box.
 
-#### Scenario: Secondmate hold
-- **WHEN** a hold belongs to a task absent from the main backlog
-- **THEN** the board shows "answer in chat" and no answer buttons
+#### Scenario: Main-home card
+- **WHEN** a main-home task waits on the captain
+- **THEN** the board offers its reply terms as answer buttons and keeps the captain-hold intake path
+
+#### Scenario: Secondmate-home card
+- **WHEN** a secondmate-home task waits on the captain
+- **THEN** the board offers its reply terms as answer buttons and the comment box
+- **AND** the card names the owning home and says the answer goes there through the first mate
+
+### Requirement: Secondmate answers reach the first mate
+WHEN the captain sends an answer on a secondmate-home card, the board runner SHALL create one inbox note for the first mate that names the home, the task id, and the exact answer text.
+The runner SHALL derive the note's request id from the source id, capture sequence, and row position.
+The board SHALL create no decision record and SHALL write into no secondmate home.
+
+#### Scenario: Answer relayed
+- **WHEN** the captain sends the term "go" on a card for task "x" in home "pm"
+- **THEN** the inbox holds one note whose body names task "pm:x" and the text "go"
+- **AND** the keyed-answer intake receives nothing
+
+#### Scenario: Repeated delivery
+- **WHEN** the runner delivers the same capture twice
+- **THEN** the inbox holds one note for that answer
+
+### Requirement: No answer-in-chat wording
+The board SHALL NOT tell the captain to answer in chat.
+
+#### Scenario: Secondmate card text
+- **WHEN** the board shows a secondmate-home card that waits on the captain
+- **THEN** the card text does not contain "answer in chat"

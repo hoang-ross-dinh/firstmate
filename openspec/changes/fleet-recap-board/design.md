@@ -82,7 +82,7 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 
 ### D9. Home coverage
 - **Decision:** Which homes does the board cover?
-- **Captain's choice:** All homes. Answer buttons appear only where routing works. Otherwise the board shows "answer in chat".
+- **Captain's choice:** All homes. Answer buttons appear only where routing works. Otherwise the board shows "answer in chat". D14 later superseded the "answer in chat" part.
 - **Rejected recommendation:** None. The captain accepted the recommendation.
 - **Reason:** The board documentation names one gap: a secondmate hold's answer request is refused in the main home until owner-aware routing ships. That routing is out of scope.
 
@@ -110,6 +110,14 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Rejected recommendation:** None. The captain accepted the recommendation.
 - **Reason:** The log is private operational state. The captain accepted that history is lost if the disk is lost.
 
+### D14. Answers on secondmate cards
+- **Decision:** What does a waiting card show when its task lives in a secondmate home?
+- **Captain's ask:** "I want the web to support a way to answer or feedback to the agent => the term "answer in chat" is not telling the main purpose of the action".
+- **Options:** A, change the wording only. B, show answer buttons on every waiting card and relay a secondmate answer through the first mate. C, route the answer directly to the owning secondmate home.
+- **Captain's choice:** B. Every waiting card shows its reply terms as answer buttons plus the comment box.
+- **Rejected recommendation:** None recorded. A was rejected because it keeps the gap. C stays a possible later follow-up, because it needs owner-aware routing in the keyed-answer intake.
+- **Reason:** The captain wants the board to carry every answer. The existing comment route already reaches the first mate with a request id, so B adds no decision store and writes into no secondmate home.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.
@@ -118,7 +126,7 @@ These choices serve the decisions above and are the implementer's, not the capta
 - **Publish command.** `bin/fm-recap-publish.sh publish <recap.json>`. The first mate composes `<recap.json>` with its summary, emoji, theme code, and reply terms per task id. The command reads backlog fields through the bearings snapshot and tasks-axi verbs, appends the iteration, builds the board, and prints the chat-line facts. A `refresh` subcommand rebuilds the board from the existing log without appending an iteration, so rendering a reply never costs an iteration.
 - **Board build.** `bin/fm-bearings-board.sh build` accepts a second payload schema, `fm-recap-board.v1`, and selects a new template for it. It reuses the existing session establishment, binding, arming, and reopening sequence. The `fm-bearings-board.v1` path and its tests stay unchanged. The publish command calls this build, so an ended session reopens through the existing sequence.
 - **Display window.** The publish command embeds full revisions for the last 30 iterations and one line per older revision. The log keeps everything.
-- **Answer route.** The template keeps the existing `fm-bearings-answer.v1` question markup for hold answers. An answer button appears only when the task id exists in the main backlog. Any hold not in the main backlog shows "answer in chat".
+- **Answer route.** The template keeps the existing `fm-bearings-answer.v1` question markup for hold answers. A main-home card keeps that path. A secondmate-home card shows the same reply terms, and its answer travels the comment route (D14): the context carries `kind: "answer"`, and the inbox note body starts with `[recap task=<home>:<id> iteration=<n> answer] `.
 - **Comment route.** Each task detail has a comment box that uses `data-lavish-question`. Its context carries a new schema, `fm-bearings-comment.v1`, which the existing answer parser ignores. The Lavish adapter gains a `comments` command. The generic runner feeds each comment to `fm-inbox.sh note --request-id <id>` with a tag naming the task id and iteration. The request id derives from the source id, the capture sequence, and the task id, so a repeated delivery replays the original note.
 - **Reply thread.** The publish and refresh commands read `fm-inbox.sh receipts`, match notes by their task tag, and embed each comment with its reply in the payload. Threads are display data and do not enter revisions.
 - **Task actions.** Merge and dispatch buttons reuse the question keys `merge.<task-id>` and `dispatch.charted`. The buttons appear only for main-home tasks, because the existing handlers resolve the PR and the backlog entry in the main home.
