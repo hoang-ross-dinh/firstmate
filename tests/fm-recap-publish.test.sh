@@ -172,6 +172,25 @@ test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title()
   pass "the real collection keys a task by its bare id and reads its quoted title"
 }
 
+test_publish_builds_the_board_while_away_mode_is_active() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_home away-publish)
+  mkdir -p "$home/config" "$home/projects"
+  fm_test_tasks_toml "$home/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  (cd "$home" && tasks-axi add sample-task "Sample task title" --repo sample >/dev/null) \
+    || fail "could not create the backlog task"
+  printf '1\n' > "$home/state/.afk"
+  write_recap "$home" '{"sample-task":{"theme":"LW","summary":"away"}}'
+  out=$(home_run "$home" env -u FM_RECAP_COLLECT_FILE FM_CONFIG_OVERRIDE="$home/config" \
+    "$PUBLISH" publish "$home/recap.json" 2>&1) || fail "publish failed during an active away window: $out"
+  printf '%s\n' "$out" | grep -qx 'iteration: 1' || fail "away publish did not append iteration 1: $out"
+  out=$(home_run "$home" env FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-bearings-snapshot.sh" --json 2>&1) && \
+    fail "plain snapshot did not refuse during an active away window: $out"
+  pass "publish builds the board while away mode is active and plain snapshot still refuses"
+}
+
 test_a_backlog_change_without_a_publish_creates_no_iteration() {
   local home
   home=$(make_home no-timer)
@@ -629,6 +648,7 @@ fm_test_run \
   test_a_repeated_delivery_of_one_capture_replays_the_same_note \
   test_each_publish_appends_one_iteration_with_the_next_sequence_number \
   test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title \
+  test_publish_builds_the_board_while_away_mode_is_active \
   test_a_backlog_change_without_a_publish_creates_no_iteration \
   test_only_changed_tasks_get_a_revision \
   test_a_summary_change_alone_stores_a_revision \

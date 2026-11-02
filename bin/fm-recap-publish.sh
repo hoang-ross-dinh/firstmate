@@ -8,6 +8,10 @@
 # bin/fm-bearings-snapshot.sh --json and bin/fm-tasks-axi.sh, never from a
 # backlog file, and makes no Jira call.
 #
+# The board is a read-only report surface, so publish and refresh build it while
+# away mode is active by passing --allow-away to the snapshot; plain /bearings
+# keeps its refusal.
+#
 # Usage:
 #   fm-recap-publish.sh publish <recap.json>
 #   fm-recap-publish.sh refresh
@@ -182,7 +186,7 @@ collect() {
     jq -c . "$FM_RECAP_COLLECT_FILE" || fail "cannot read the collect file"
     return 0
   fi
-  snapshot=$("$SCRIPT_DIR/fm-bearings-snapshot.sh" --json --all-recorded-prs) \
+  snapshot=$("$SCRIPT_DIR/fm-bearings-snapshot.sh" --json --all-recorded-prs --allow-away) \
     || fail "cannot read the bearings snapshot"
   prs=$(jq -c '[.recorded_prs[]? | {key: .id, value: .url}] | from_entries' <<< "$snapshot")
   warnings=$(jq -c '

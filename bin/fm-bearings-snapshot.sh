@@ -62,6 +62,9 @@
 # catch-up was retained. Reporting is not ordinary captain work, so the gate never
 # suppresses the digest; an ACTIVE away window still refuses, because the right
 # answer there is to run the return first. bin/fm-afk-return.sh owns the gate.
+# The one exception is the internal --allow-away flag, passed only by
+# bin/fm-recap-publish.sh: the Fleet Recap board is a read-only report surface, so
+# its build may read the snapshot while away mode is active.
 #
 # The landed section merges this home's Done with the canonical snapshot's
 # secondmate_landed roll-up (fm-fleet-snapshot.sh), so merges a secondmate managed -
@@ -87,6 +90,7 @@
 #   --all-recorded-prs include every locally recorded PR
 #   --all-unhealthy  include every unhealthy endpoint
 #   --all-pr-repos   query every discovered repository under --include-prs
+#   --allow-away     internal: skip the active-away refusal (fm-recap-publish.sh only)
 #   -h,--help        usage
 #
 # Output contract: `fm-bearings.v1`. No locks or reports; the underlying snapshot's
@@ -138,7 +142,7 @@ usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
                                [--all-secondmates] [--all-landed]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
-                               [--all-pr-repos]
+                               [--all-pr-repos] [--allow-away]
 
 Compact bearings projection over fm-fleet-snapshot.sh. TOON by default.
 Default collection performs bounded concurrent remote-ledger reads for registered
@@ -180,6 +184,7 @@ ALL_DECISIONS=0
 ALL_SECONDMATES=0
 ALL_LANDED=0
 ALL_RECORDED_PRS=0
+ALLOW_AWAY=0
 ALL_UNHEALTHY=0
 ALL_PR_REPOS=0
 FIELDS=""
@@ -196,6 +201,7 @@ while [ $# -gt 0 ]; do
     --all-recorded-prs) ALL_RECORDED_PRS=1 ;;
     --all-unhealthy) ALL_UNHEALTHY=1 ;;
     --all-pr-repos) ALL_PR_REPOS=1 ;;
+    --allow-away) ALLOW_AWAY=1 ;;
     --fields) shift; FIELDS=${1:-} ;;
     --fields=*) FIELDS=${1#--fields=} ;;
     -h|--help) usage; exit 0 ;;
@@ -216,6 +222,9 @@ command -v jq >/dev/null 2>&1 || { echo "fm-bearings-snapshot: jq not found" >&2
 RETURN_CATCHUP=null
 GUARD_RC=0
 GUARD_ERR=$("$SCRIPT_DIR/fm-afk-return.sh" guard 2>&1 >/dev/null) || GUARD_RC=$?
+if [ "$GUARD_RC" -eq 3 ] && [ "$ALLOW_AWAY" = 1 ]; then
+  GUARD_RC=0
+fi
 if [ "$GUARD_RC" -ne 0 ] && [ "$GUARD_RC" -ne 4 ]; then
   [ -z "$GUARD_ERR" ] || printf '%s\n' "$GUARD_ERR" >&2
   exit "$GUARD_RC"

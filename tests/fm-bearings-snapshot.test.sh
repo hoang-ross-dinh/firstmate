@@ -2119,6 +2119,18 @@ test_live_blocker_is_not_charted_queue_work() {
   pass "Bearings keeps a live blocker in structured live state and never converts it to Charted Next queue work"
 }
 
+test_active_away_window_refuses_unless_the_recap_board_flag_is_passed() {
+  local home fakebin out rc=0
+  home=$(make_home away-refusal); write_fixture "$home"
+  printf '1\n' > "$home/state/.afk"
+  fakebin=$(make_fakebin "$home")
+  out=$(FM_STATE_OVERRIDE="$home/state" run "$home" "$fakebin" --json 2>&1) || rc=$?
+  [ "$rc" = 3 ] || fail "plain bearings did not refuse an active away window (rc=$rc): $out"
+  out=$(FM_STATE_OVERRIDE="$home/state" run "$home" "$fakebin" --json --allow-away 2>&1) || fail "--allow-away did not read the snapshot: $out"
+  printf '%s' "$out" | jq -e '.schema // .contract // true' >/dev/null || fail "--allow-away output was not JSON: $out"
+  pass "an active away window refuses plain bearings and --allow-away still reads the snapshot"
+}
+
 # Captain's Call is populated only from the durable keyed open-decision set. The
 # anti-leak guard: action-free highlights - a working task, a completed scout,
 # queued/gated items, landed work - must never surface as an open decision, so they
@@ -3392,6 +3404,7 @@ fm_test_run \
   test_all_landed_keeps_complete_global_order \
   test_landed_bounded_and_disclosed \
   test_live_blocker_is_not_charted_queue_work \
+  test_active_away_window_refuses_unless_the_recap_board_flag_is_passed \
   test_captains_call_anti_leak \
   test_main_orphan_in_flight_is_disclosed_not_invented \
   test_main_unstructured_current_is_disclosed_with_structured_sibling \
