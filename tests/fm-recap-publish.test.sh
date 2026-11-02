@@ -462,18 +462,35 @@ test_a_main_home_hold_queues_its_answer_for_the_captain_hold_intake() {
   pass "a main-home hold answer queues as a keyed answer for the captain-hold intake"
 }
 
-test_a_secondmate_hold_says_answer_in_chat_and_offers_no_answer_buttons() {
+test_a_secondmate_card_offers_answer_buttons_and_names_who_acts() {
   local home board out
-  home=$(make_home chat-answer)
+  home=$(make_home relay-card)
   {
-    entry 1 '["pm:x"]' "{\"pm:x\": $(rev pm:x queued "Mate task" '{"held":true,"hold_kind":"captain","waiting":true,"hold_reason":"pick","reply_terms":["go"]}')}"
+    entry 1 '["pm:x"]' "{\"pm:x\": $(rev pm:x queued "Mate task" '{"held":true,"hold_kind":"captain","waiting":true,"hold_reason":"pick","reply_terms":["go","later"]}')}"
   } > "$(log_of "$home")"
   board=$(refresh_board "$home")
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"pm:x"}}]')
-  printf '%s' "$out" | all_text | grep -q 'answer in chat' || fail "a secondmate hold did not say answer in chat"
-  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "input" or (.tag == "form" and .attrs["data-lavish-question"] == "x"))] | length == 0' >/dev/null \
-    || fail "a secondmate hold offered answer inputs"
-  pass "a secondmate hold shows answer in chat and no answer buttons"
+  printf '%s' "$out" | all_text | grep -q 'Answer goes to pm through the first mate' || fail "the card did not name who acts"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.text | test("answer in chat"; "i"))] | length == 0' >/dev/null     || fail "the card still tells the captain to answer in chat"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"pm:x"}},{"check":{"value":"go"}},{"submit":{"question":"answer.pm-x"}}]')
+  printf '%s' "$out" | jq -e '.error == "" and (.queued | length == 1 and (.[0] | .tag == "choice"
+    and .data.schema == "fm-bearings-comment.v1" and .data.kind == "answer" and .data.task == "pm:x" and .data.text == "go"))' >/dev/null     || fail "the secondmate answer was not queued as a relayed answer: $(printf '%s' "$out" | jq -c '[.error, .queued]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "label") | .text] | index("reconcile") == null and index("Reconcile") == null' >/dev/null \
+    || fail "a secondmate card offered the main-home reconcile choice"
+  pass "a secondmate card offers answer buttons, names who acts, and queues a relayed answer"
+}
+
+test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box() {
+  local home board out
+  home=$(make_home main-card)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "label") | .text] | index("go") != null and index("later") != null' >/dev/null \
+    || fail "the main-home card lost its reply terms"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "form") | .attrs["data-lavish-question"]] | index("b") != null and index("comment.b") != null' >/dev/null \
+    || fail "the main-home card lost its answer form or comment box"
+  pass "a main-home card keeps its reply terms, answer form, and comment box"
 }
 
 test_merge_and_dispatch_buttons_reuse_the_existing_routes() {
@@ -559,6 +576,27 @@ test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer() {
   pass "a board comment becomes one tagged inbox note"
 }
 
+RELAY_ROW='  "choice","answer","Context data: {\"schema\":\"fm-bearings-comment.v1\",\"kind\":\"answer\",\"task\":\"pm:x\",\"iteration\":4,\"text\":\"go - after lunch\"}"'
+
+test_a_secondmate_answer_reaches_the_first_mate_as_one_answer_note() {
+  local home sid=lavish-c3a4d0000000f1e2 out receipts
+  home=$(make_home relay-note)
+  mkdir -p "$home/config"
+  out=$(run_capture "$home" "$sid" "$RELAY_ROW"$'\n'"$ANSWER_ROW") || fail "the runner failed: $out"
+  receipts=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" receipts --all-pending)
+  printf '%s' "$receipts" | jq -e '.pending | length == 1 and (.[0].body == "[recap task=pm:x iteration=4 answer] go - after lunch")' >/dev/null \
+    || fail "the relayed answer did not become one answer-tagged note: $receipts"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" reply "$(printf '%s' "$receipts" | jq -r '.pending[0].id')" 'relayed to pm' >/dev/null \
+    || fail "could not reply to the relayed answer"
+  printf '{"schema":"fm-recap-iteration.v1","seq":4,"at":"2026-10-04T09:00:00Z","tasks":["pm:x"],"revisions":{"pm:x":%s},"changed_themes":[],"waiting":1,"warnings":[]}\n' \
+    "$(rev pm:x queued "Mate task" '{"held":true,"waiting":true,"reply_terms":["go"]}')" > "$(log_of "$home")"
+  home_run "$home" "$PUBLISH" refresh >/dev/null || fail "refresh failed"
+  out=$(render "$home/.lavish/bearings-board.html" '[{"click":{"attr":"data-task","value":"pm:x"}}]')
+  printf '%s' "$out" | all_text | grep -q 'answer relayed' || fail "the thread did not mark the relayed answer"
+  printf '%s' "$out" | all_text | grep -q 'relayed to pm' || fail "the thread did not show the first mate reply"
+  pass "a secondmate answer reaches the first mate as one answer-tagged note and shows its reply"
+}
+
 test_a_comment_that_names_a_task_never_reaches_the_answer_intake() {
   local home sid=lavish-c1a4d0000000f1e2 out
   home=$(make_home comment-no-answer)
@@ -586,6 +624,7 @@ test_a_repeated_delivery_of_one_capture_replays_the_same_note() {
 
 fm_test_run \
   test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer \
+  test_a_secondmate_answer_reaches_the_first_mate_as_one_answer_note \
   test_a_comment_that_names_a_task_never_reaches_the_answer_intake \
   test_a_repeated_delivery_of_one_capture_replays_the_same_note \
   test_each_publish_appends_one_iteration_with_the_next_sequence_number \
@@ -608,7 +647,8 @@ fm_test_run \
   test_a_jira_key_links_only_through_the_private_base_setting \
   test_warnings_have_their_own_section_and_never_count_as_work \
   test_a_main_home_hold_queues_its_answer_for_the_captain_hold_intake \
-  test_a_secondmate_hold_says_answer_in_chat_and_offers_no_answer_buttons \
+  test_a_secondmate_card_offers_answer_buttons_and_names_who_acts \
+  test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box \
   test_merge_and_dispatch_buttons_reuse_the_existing_routes \
   test_a_comment_queues_with_the_question_markup_and_shows_its_reply \
   test_a_comment_reply_renders_under_its_comment

@@ -115,8 +115,10 @@
 # form. Malformed content or a declared/parsed count mismatch prints a diagnostic
 # to stderr and exits 3, even if valid choices were already printed to stdout;
 # callers must not treat that output as a complete extraction.
-# `comments` prints `task<TAB>iteration<TAB>text` for each Fleet Recap board
-# comment, a `choice` row whose context schema is `fm-bearings-comment.v1`.
+# `comments` prints `task<TAB>iteration<TAB>kind<TAB>text` for each Fleet Recap
+# board comment, a `choice` row whose context schema is `fm-bearings-comment.v1`.
+# The kind is `answer` when the context says so (a secondmate card's answer
+# relayed through the first mate) and `comment` otherwise.
 # Comment rows never appear in `answers` or `reconciles`, and the runner turns
 # them into inbox notes rather than keyed answers.
 #
@@ -804,11 +806,13 @@ cmd_choice_rows() {
         my ($task, $iter, $text) = @{$data}{qw(task iteration text)};
         next if !defined($task) || ref($task) || !defined($iter) || ref($iter)
           || !defined($text) || ref($text);
+        my $kind = defined($data->{kind}) && !ref($data->{kind}) && $data->{kind} eq "answer"
+          ? "answer" : "comment";
         next unless $task =~ /\A[A-Za-z0-9._:-]{1,160}\z/ && $iter =~ /\A[0-9]{1,9}\z/;
         s/[\x00-\x1f\x7f]/ /g for ($text);
         $text =~ s/\A\s+|\s+\z//g;
         next unless length($text) && length($text) <= 2000;
-        push @comments, { task => $task, iteration => $iter + 0, text => $text };
+        push @comments, { task => $task, iteration => $iter + 0, kind => $kind, text => $text };
         next;
       }
       next if $selection eq "comments";
@@ -857,7 +861,7 @@ cmd_choice_rows() {
         answer => $answer, label => $label, mode => $mode
       };
     }
-    print "$_->{task}\t$_->{iteration}\t$_->{text}\n" for @comments;
+    print "$_->{task}\t$_->{iteration}\t$_->{kind}\t$_->{text}\n" for @comments;
     for my $choice (grep { defined } @choices) {
       if ($selection eq "reconciles") {
         next if $choice->{legacy};
@@ -883,7 +887,7 @@ cmd_choice_rows() {
 
 cmd_answers() { cmd_choice_rows answers "$@"; }
 cmd_reconciles() { cmd_choice_rows reconciles "$@"; }
-# Print `task<TAB>iteration<TAB>text` for each Fleet Recap board comment.
+# Print `task<TAB>iteration<TAB>kind<TAB>text` for each Fleet Recap board comment.
 cmd_comments() { cmd_choice_rows comments "$@"; }
 
 # Present one already-captured result for a handler. Body lines are prefixed

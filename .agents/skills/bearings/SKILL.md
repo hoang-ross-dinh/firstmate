@@ -103,6 +103,9 @@ Never write the iteration log or read a backlog file yourself.
 A board comment arrives as an inbox note whose body starts with `[recap task=<key> iteration=<n>]`.
 Answer it with `bin/fm-inbox.sh reply <id> <text>` and then run `bin/fm-recap-publish.sh refresh`, which shows the reply without costing an iteration.
 Hold answers, `merge.<task-id>`, and `dispatch.charted` arrive as the board wake below and follow the same routing.
+An answer on a secondmate-home card arrives as an inbox note whose body starts with `[recap task=<home>:<id> iteration=<n> answer] ` followed by the exact answer text.
+Relay it to that home's secondmate through the normal secondmate steer, then reply to the note with `bin/fm-inbox.sh reply <id> <text>` and run `bin/fm-recap-publish.sh refresh`.
+Never write the answer into the secondmate's home or record it as a captain decision yourself.
 The fm-bearings-board.v1 board below stays buildable until the captain accepts the Fleet Recap board.
 
 ## Lavish board mode

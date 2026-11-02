@@ -447,21 +447,19 @@ __FM_BEARINGS_BOARD_DATA__
   }
 
   function holdAnswer(parent, task, rev) {
+    var relay = task.home !== MAIN_HOME;
     var panel = el("section", "fm-card rb-panel");
     panel.appendChild(el("h3", "", "Waiting on you"));
     if (rev.hold_reason) panel.appendChild(el("div", "rb-row__sub", rev.hold_reason));
-    if (task.home !== MAIN_HOME) {
-      panel.appendChild(el("div", "rb-row__title", "answer in chat"));
-      parent.appendChild(panel);
-      return;
-    }
-    var form = questionForm(task.id);
+    if (relay) panel.appendChild(el("div", "rb-row__sub", "Answer goes to " + task.home + " through the first mate"));
+    var form = questionForm(relay ? "answer." + slug(task.key) : task.id);
     var opts = el("div", "rb-opts");
-    var radios = [];
-    (rev.reply_terms || []).concat(["reconcile"]).forEach(function (term) {
+    var radios = [], terms = {};
+    (rev.reply_terms || []).concat(relay ? [] : ["reconcile"]).forEach(function (term) {
       var lab = el("label", "rb-opt");
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = slug(term);
+      terms[input.value] = term;
       radios.push(input);
       lab.appendChild(input);
       lab.appendChild(el("span", "", term === "reconcile" ? "Reconcile" : term));
@@ -481,6 +479,14 @@ __FM_BEARINGS_BOARD_DATA__
       var text = (note.value || "").trim();
       var shown = value ? (text ? value + " - " + text : value) : text;
       if (!shown) return;
+      if (relay) {
+        var exact = value ? (text ? terms[value] + " - " + text : terms[value]) : text;
+        if (utf8Length(exact) > COMMENT_LIMIT) { ui.limit.textContent = "Answer is too long to queue (" + COMMENT_LIMIT + " bytes maximum)."; return; }
+        queue(form, "Answer for " + task.home + " - " + rev.title + ": " + exact, rev.title + " -> " + exact,
+          { schema: "fm-bearings-comment.v1", kind: "answer", task: task.key, iteration: data.iteration, text: exact });
+        ui.queued.hidden = false;
+        return;
+      }
       if (utf8Length(shown) > 512) { ui.limit.textContent = "Answer is too long to queue (512 bytes maximum)."; return; }
       var ctx = { schema: "fm-bearings-answer.v1", question: task.id, selection: value, note: text };
       if (rev.close) ctx.close = rev.close;
@@ -546,7 +552,7 @@ __FM_BEARINGS_BOARD_DATA__
     panel.appendChild(el("h3", "", "Comments"));
     task.comments.forEach(function (c) {
       var box = el("div", "rb-comment");
-      box.appendChild(el("div", "rb-row__mark", "iteration " + c.iteration + (c.at ? " - " + c.at : "")));
+      box.appendChild(el("div", "rb-row__mark", (c.kind === "answer" ? "answer relayed - " : "") + "iteration " + c.iteration + (c.at ? " - " + c.at : "")));
       box.appendChild(el("div", "", c.text));
       if (c.reply) {
         var rep = el("div", "rb-reply");

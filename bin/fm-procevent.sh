@@ -489,16 +489,18 @@ feed_reconcile_requests() {  # <adapter> <source-id> <result-file>
 # and a comment never reaches the keyed-answer intake. Best-effort and silenced
 # like the seams above: it never acknowledges the capture.
 feed_comments() {  # <adapter> <source-id> <result-file>
-  local adapter=$1 id=$2 result=$3 script seq rows task iter text n=0 fed=1
+  local adapter=$1 id=$2 result=$3 script seq rows task iter kind text n=0 fed=1 tag
   script=$(adapter_script "$adapter")
   [ -f "$script" ] && [ ! -L "$script" ] || return 1
   seq=$(fm_procevent_result_sequence "$result") || return 1
   rows=$("$script" comments "$result" 2>/dev/null) || return 1
-  while IFS=$'\t' read -r task iter text; do
+  while IFS=$'\t' read -r task iter kind text; do
     [ -n "$task" ] || continue
     n=$((n + 1))
+    tag="[recap task=$task iteration=$iter]"
+    [ "$kind" != answer ] || tag="[recap task=$task iteration=$iter answer]"
     "$SCRIPT_DIR/fm-inbox.sh" note --request-id "recap-comment:$id:$seq:$n" \
-      "[recap task=$task iteration=$iter] $text" >/dev/null 2>&1 && fed=0
+      "$tag $text" >/dev/null 2>&1 && fed=0
   done <<EOF
 $rows
 EOF

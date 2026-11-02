@@ -37,7 +37,7 @@
 
 ## 6. Answers on secondmate cards (D14)
 
-- [ ] 6.1 Show reply-term answer buttons and the owning-home line on secondmate waiting cards, and remove the "answer in chat" text
-- [ ] 6.2 Carry a secondmate answer through the comment route with `kind: "answer"` and an answer-tagged inbox note
-- [ ] 6.3 Show relayed answers and their replies in the task thread
-- [ ] 6.4 Add tests for both card kinds, the relayed note fields, and repeated delivery
+- [x] 6.1 Show reply-term answer buttons and the owning-home line on secondmate waiting cards, and remove the "answer in chat" text
+- [x] 6.2 Carry a secondmate answer through the comment route with `kind: "answer"` and an answer-tagged inbox note
+- [x] 6.3 Show relayed answers and their replies in the task thread
+- [x] 6.4 Add tests for both card kinds, the relayed note fields, and repeated delivery

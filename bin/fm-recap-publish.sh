@@ -277,9 +277,9 @@ collect_comments() {
   jq -c '
     ([.pending[]?, .handled[]?]) as $notes
     | [$notes[]
-      | select(.body | test("^\\[recap task=[^ ]+ iteration=[0-9]+\\] "))
-      | (.body | capture("^\\[recap task=(?<task>[^ ]+) iteration=(?<iteration>[0-9]+)\\] (?<text>.*)$"; "s")) as $c
-      | {key: $c.task, iteration: ($c.iteration | tonumber), text: $c.text, at: .at, id: .id,
+      | select(.body | test("^\\[recap task=[^ ]+ iteration=[0-9]+( answer)?\\] "))
+      | (.body | capture("^\\[recap task=(?<task>[^ ]+) iteration=(?<iteration>[0-9]+)(?<answer> answer)?\\] (?<text>.*)$"; "s")) as $c
+      | {key: $c.task, iteration: ($c.iteration | tonumber), kind: (if $c.answer then "answer" else "comment" end), text: $c.text, at: .at, id: .id,
          reply: (if .reply == null then null else {text: (.reply.body // .reply.text // ""), at: (.reply.at // "")} end)}]' \
     <<< "$receipts" 2>/dev/null || printf '[]\n'
 }
