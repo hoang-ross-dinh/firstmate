@@ -36,12 +36,20 @@
 #   { "schema": "fm-recap.v1",
 #     "tasks": { "<task-key>": { "summary": "...", "emoji": "...",
 #                                "theme": "LW", "reply_terms": ["merge"],
-#                                "close": "release" } } }
+#                                "close": "release",
+#                                "links": [{ "kind": "ticket", "code": "COD-1",
+#                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
 # secondmate home. Every field is optional. A task without an entry, or an entry
 # without a field, keeps the value from its last revision, and a new task falls
 # back to theme "misc" with an empty summary and emoji. close is "done" or
-# "release" and only matters for a task the captain answers.
+# "release" and only matters for a task the captain answers. links is the list of
+# tickets and merge requests the board shows as chips on the row and under
+# "Tickets & MRs" in the detail panel: kind is "ticket" or "mr", code and an
+# http(s) url are required, text is an optional short title. A publish with any
+# other kind, an empty code, or a url that is not http(s) is rejected whole, like
+# any other bad field, and the board makes no network call for a link. An empty
+# list clears a task's links.
 #
 # THE LOG is $DATA/recap-iterations.jsonl in the main home's gitignored data/
 # directory, one fm-recap-iteration.v1 JSON object per line, written only here.
@@ -233,7 +241,13 @@ validate_recap() {  # <recap.json>
       and ((has("theme") | not) or (.theme | type == "string" and test("^[A-Za-z0-9._-]{1,16}$")))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
       and ((has("reply_terms") | not) or (.reply_terms | type == "array"
-        and ([.[] | type == "string" and length > 0 and length <= 64] | all)))] | all)' "$1" >/dev/null
+        and ([.[] | type == "string" and length > 0 and length <= 64] | all)))
+      and ((has("links") | not) or (.links | type == "array"
+        and ([.[] | type == "object"
+          and (.kind == "ticket" or .kind == "mr")
+          and (.code | type == "string" and length > 0 and length <= 64)
+          and (.url | type == "string" and test("^https?://[^\\s]+$"))
+          and ((has("text") | not) or (.text | type == "string"))] | all)))] | all)' "$1" >/dev/null
 }
 
 # The new iteration entry from the prior entries, the collection, and the recap.
@@ -257,6 +271,9 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
             reply_terms: ($mine.reply_terms // $old.reply_terms // []),
             close: ($mine.close // $old.close // "")
           }
+        # links are stored only when present, so a task without any keeps its
+        # earlier revision unchanged.
+        + (($mine.links // $old.links // []) as $l | if ($l | length) > 0 then {links: $l} else {} end)
         | {key: $t.key, value: .}
         | select(.value != $old)] as $changed
     | {

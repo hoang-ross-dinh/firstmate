@@ -999,6 +999,159 @@ test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note() {
   pass "a failed poll keeps the last data with a stale note that clears on the next good poll"
 }
 
+# --- ticket and MR links ----------------------------------------------------
+
+LINKS_FIXTURE='[{"kind":"ticket","code":"EXAMPLE-1","url":"https://example.invalid/browse/EXAMPLE-1","text":"Synthetic ticket title"},
+  {"kind":"mr","code":"!7001","url":"https://example.invalid/mr/7001","text":"Synthetic MR description"},
+  {"kind":"mr","code":"!7002","url":"https://example.invalid/mr/7002"}]'
+
+test_publish_accepts_links_and_stores_them_only_when_present_or_changed() {
+  local home
+  home=$(make_home links-store)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B")]"
+  write_recap "$home" "{\"a\":{\"links\":$LINKS_FIXTURE}}"
+  publish "$home" >/dev/null || fail "a recap with links did not publish"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a.links | length == 3 and .[0].code == "EXAMPLE-1" and .[1].kind == "mr" and (.[2] | has("text") | not)' >/dev/null \
+    || fail "the links were not stored on the revision: $(tail -1 "$(log_of "$home")")"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.b | has("links") | not' >/dev/null \
+    || fail "a task without links gained a links field"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the second publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "an unchanged task got a new revision: $(tail -1 "$(log_of "$home")")"
+  write_recap "$home" '{"a":{"links":[]}}'
+  publish "$home" >/dev/null || fail "an empty links list did not publish"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a | has("links") | not' >/dev/null || fail "an empty list did not clear the links"
+  pass "publish stores links, keeps an unchanged task without a new revision, and an empty list clears them"
+}
+
+test_publish_refuses_a_bad_link_entry_and_writes_nothing() {
+  local home bad
+  home=$(make_home links-invalid)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  while IFS= read -r bad; do
+    jq -c -n --argjson l "$bad" '{schema: "fm-recap.v1", tasks: {a: {links: $l}}}' > "$home/recap.json"
+    publish "$home" >/dev/null 2>&1 && fail "a bad link list published: $bad"
+  done <<'JSON'
+[{"kind":"epic","code":"EXAMPLE-1","url":"https://example.invalid/a"}]
+[{"code":"EXAMPLE-1","url":"https://example.invalid/a"}]
+[{"kind":"ticket","url":"https://example.invalid/a"}]
+[{"kind":"ticket","code":"","url":"https://example.invalid/a"}]
+[{"kind":"ticket","code":"EXAMPLE-1"}]
+[{"kind":"ticket","code":"EXAMPLE-1","url":"javascript:alert(1)"}]
+[{"kind":"ticket","code":"EXAMPLE-1","url":"ftp://example.invalid/a"}]
+[{"kind":"ticket","code":"EXAMPLE-1","url":"https://example.invalid/a b"}]
+[{"kind":"mr","code":"!1","url":"https://example.invalid/a","text":7}]
+["EXAMPLE-1"]
+"EXAMPLE-1"
+JSON
+  [ ! -e "$(log_of "$home")" ] || fail "a bad link list wrote the log"
+  pass "a bad link entry refuses the publish and writes nothing"
+}
+
+link_anchors() { jq -c '[.nodes[] | select(.tag == "a" and ((.attrs.href // "") | startswith("https://example.invalid/")))]'; }
+
+test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
+  local home board out
+  home=$(make_home links-render)
+  entry 1 '["a","b"]' "{
+    \"a\": $(rev a queued "Task A" "{\"links\": $LINKS_FIXTURE}"),
+    \"b\": $(rev b queued "Task B")}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the board errored: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["EXAMPLE-1", "!7001", "!7002"]' >/dev/null \
+    || fail "the row did not carry one chip per link: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlink") | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlinks")] | length == 1' >/dev/null \
+    || fail "a task without links got a chip strip"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3")] | length == 0' >/dev/null || fail "the panel was open on load"
+  printf '%s' "$out" | link_anchors | jq -e 'length == 3 and all(.[]; .attrs.target == "_blank" and .attrs.rel == "noopener noreferrer")' >/dev/null \
+    || fail "a chip lacked target or rel: $(printf '%s' "$out" | link_anchors)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "fm-badge fm-badge--neutral" or .cls == "fm-badge fm-badge--info") | .text] | all(. != "open" and . != "merged" and . != "closed")' >/dev/null \
+    || fail "an MR chip got a state badge"
+  # The chip is not part of the row button, so a chip click leaves the panel closed.
+  out=$(render "$board" '[{"click":{"text":"EXAMPLE-1"}}]')
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.tag == "h3")] | length == 0)' >/dev/null \
+    || fail "a chip click opened the panel or errored: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row$")) | .tag] | all(. == "button")' >/dev/null \
+    || fail "a task row stopped being a button"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") != null' >/dev/null \
+    || fail "the panel has no Tickets & MRs section"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("Tickets") != null and index("MRs") != null)' >/dev/null \
+    || fail "the panel did not show both groups"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlinkitem") | .text] == ["EXAMPLE-1Synthetic ticket title", "!7001Synthetic MR description", "!7002"]' >/dev/null \
+    || fail "the panel items were not code then text: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlinkitem") | .text]')"
+  printf '%s' "$out" | link_anchors | jq -e '[.[] | select(.cls == "")] | length == 3 and all(.[]; .attrs.target == "_blank" and .attrs.rel == "noopener noreferrer")' >/dev/null \
+    || fail "a panel link lacked target or rel"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") == null' >/dev/null \
+    || fail "a task without links got the section"
+  pass "rows carry linked chips, the panel has a Tickets & MRs section, and a task without links renders as before"
+}
+
+test_a_task_with_only_one_link_kind_shows_only_that_group() {
+  local home board out
+  home=$(make_home links-one-kind)
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A" '{"links":[{"kind":"mr","code":"!7003","url":"https://example.invalid/mr/7003","text":"Only an MR"}]}')}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("MRs") != null and index("Tickets") == null)' >/dev/null \
+    || fail "the panel showed an empty or missing group"
+  pass "a panel group is omitted when it has no links"
+}
+
+test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link() {
+  local home board out
+  home=$(make_home links-hostile)
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A" '{"links":[
+    {"kind":"ticket","code":"<img src=x onerror=alert(1)>","url":"https://example.invalid/browse/X\"onmouseover=\"alert(1)","text":"<script>alert(2)</script>"},
+    {"kind":"ticket","code":"EVIL-1","url":"javascript:alert(3)","text":"bad scheme"},
+    {"kind":"mr","code":"EVIL-2","url":"data:text/html,x","text":"bad scheme"},
+    {"kind":"epic","code":"EVIL-3","url":"https://example.invalid/e","text":"bad kind"}]}')}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "hostile link values broke the page: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "img" or .tag == "script")] | length == 0' >/dev/null \
+    || fail "a link value became markup"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["<img src=x onerror=alert(1)>"]' >/dev/null \
+    || fail "the hostile code was not kept as plain text or an unsafe entry stayed: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlink") | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a") | .attrs.href // ""] | all(startswith("http://") or startswith("https://") or . == "")' >/dev/null \
+    || fail "a non-http link got an href"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a" and .attrs.href != null)] | all(.attrs.target == "_blank" and (.attrs.rel | test("noopener")) and (.attrs.rel | test("noreferrer")))' >/dev/null \
+    || fail "a link lacked target or rel"
+  pass "link values render as plain text and only http(s) urls of a valid kind become links"
+}
+
+test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus() {
+  local home board dir out acts new="$TMP_ROOT/links-poll-new.js"
+  home=$(make_home links-poll)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/links-poll-old.js"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "{\"theme\":\"LW\",\"summary\":\"A two\",\"links\":$LINKS_FIXTURE}")}" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  cp "$dir/bearings-board.data.js" "$new"
+  cp "$TMP_ROOT/links-poll-old.js" "$dir/bearings-board.data.js"
+  acts="[{\"scroll\":240},{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"panelscroll\":300},{\"poll\":{\"file\":\"$new\"}}]"
+  out=$(render "$board" "$acts")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the poll errored: $out"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "the poll did not load the new data"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink")] | length == 0' >/dev/null \
+    || fail "links showed on an iteration that has none"
+  [ "$(printf '%s' "$out" | jq '.scrolledTo')" = 240 ] || fail "the poll lost the page scroll"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-drawer__body") | .scrollTop] == [300]' >/dev/null || fail "the poll lost the panel scroll"
+  printf '%s' "$out" | jq -e '.focused.attrs["data-close"] == "1"' >/dev/null || fail "the poll lost focus"
+  # Viewing the new iteration in the same page, with no reload, shows the links in the row and the open panel.
+  out=$(render "$board" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"poll\":{\"file\":\"$new\"}},{\"click\":{\"attr\":\"data-new-iteration\",\"value\":\"4\"}}]")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the redraw errored: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["EXAMPLE-1", "!7001", "!7002"]' >/dev/null \
+    || fail "the chips did not appear after the poll"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") != null' >/dev/null \
+    || fail "the open panel did not gain the section after the poll"
+  pass "links appear after a poll in the row and the open panel, keeping scroll, panel and focus"
+}
+
 fm_test_run \
   test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer \
   test_a_secondmate_answer_reaches_the_first_mate_as_one_answer_note \
@@ -1047,4 +1200,10 @@ fm_test_run \
   test_the_data_file_is_replaced_atomically \
   test_a_poll_redraws_in_place_keeping_scroll_panel_and_focus \
   test_a_poll_waits_while_a_field_has_focus_or_unsent_text \
-  test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note
+  test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note \
+  test_publish_accepts_links_and_stores_them_only_when_present_or_changed \
+  test_publish_refuses_a_bad_link_entry_and_writes_nothing \
+  test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section \
+  test_a_task_with_only_one_link_kind_shows_only_that_group \
+  test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \
+  test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus
