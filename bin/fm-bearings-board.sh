@@ -93,6 +93,14 @@
 # a recap payload carries every task and its hold state, so nothing is dropped.
 # The fm-bearings-board.v1 path is unchanged.
 #
+# THE RECAP PAGE IS STATIC. A recap publish writes the payload to a sibling file,
+# bearings-board.data.js next to the board (atomic tmp + mv), and rewrites the
+# board HTML only when the template content differs from the file on disk, so an
+# ordinary iteration never touches the HTML and Lavish never reloads the page.
+# The page polls that file and redraws in place (template header). The payload is
+# a script file, not JSON, because Lavish serves the page in a sandboxed frame
+# with no CORS headers, which blocks fetch and XHR but not a script tag.
+#
 # FM_BEARINGS_BOARD_TEMPLATE and FM_RECAP_BOARD_TEMPLATE override the shipped
 # template paths (tests only).
 set -eu
@@ -105,6 +113,7 @@ TEMPLATE="${FM_BEARINGS_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/a
 PLACEHOLDER='__FM_BEARINGS_BOARD_DATA__'
 BOARD_SCHEMA=fm-bearings-board.v1
 RECAP_SCHEMA=fm-recap-board.v1
+RECAP_DATA_NAME=bearings-board.data.js
 RECAP_TEMPLATE="${FM_RECAP_BOARD_TEMPLATE:-$SCRIPT_DIR/../.agents/skills/bearings/assets/recap-board-template.html}"
 
 usage() {
@@ -393,6 +402,39 @@ await_source_owner() {  # <source-id>
   printf '%s\n' "${owner:-none}"
 }
 
+# The recap page is static: the payload lives in a sibling data file the page polls, so a
+# publish never rewrites the page and Lavish never reloads it. Data goes first, atomically,
+# so a page that loads at any moment reads a whole payload. The page is rewritten only when
+# the template content differs from the board on disk.
+publish_recap_files() {  # <compact-json> <board>
+  local json=$1 board=$2 dir data tmp
+  dir=${board%/*}
+  data="$dir/$RECAP_DATA_NAME"
+  tmp=$(umask 077; mktemp "$dir/.board.XXXXXX") || fail "cannot stage the board data"
+  if ! printf 'window.__fmBoard = %s;\n' "$json" > "$tmp"; then
+    rm -f -- "$tmp"
+    fail "cannot stage the board data"
+  fi
+  # Round-trip the staged payload, so data the page cannot parse fails here.
+  if ! sed '1s/^window\.__fmBoard = //;$s/;$//' "$tmp" \
+    | jq -e --arg schema "$BOARD_SCHEMA" '.schema == $schema' >/dev/null 2>&1; then
+    rm -f -- "$tmp"
+    fail "the board data does not carry a readable $BOARD_SCHEMA payload"
+  fi
+  if ! { chmod 0600 "$tmp" && mv -f -- "$tmp" "$data"; }; then
+    rm -f -- "$tmp"
+    fail "cannot publish the board data"
+  fi
+  if [ -f "$board" ] && cmp -s -- "$TEMPLATE" "$board"; then
+    return 0
+  fi
+  tmp=$(umask 077; mktemp "$dir/.board.XXXXXX") || fail "cannot stage the board"
+  if ! { cp -- "$TEMPLATE" "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$board"; }; then
+    rm -f -- "$tmp"
+    fail "cannot publish the board"
+  fi
+}
+
 command_build() {
   local data=${1-} board json tmp sid extracted effective owner version pre_reopen_owner recap=0
   [ "$#" -eq 1 ] || { usage >&2; exit 2; }
@@ -408,7 +450,7 @@ command_build() {
     validate_payload "$data" || fail "board data does not satisfy $BOARD_SCHEMA: $data"
   fi
   [ -f "$TEMPLATE" ] && [ ! -L "$TEMPLATE" ] || fail "board template is missing: $TEMPLATE"
-  [ "$(grep -cxF "$PLACEHOLDER" "$TEMPLATE")" -eq 1 ] \
+  [ "$recap" -eq 1 ] || [ "$(grep -cxF "$PLACEHOLDER" "$TEMPLATE")" -eq 1 ] \
     || fail "board template does not carry exactly one data slot: $TEMPLATE"
 
   effective=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-bearings-payload.XXXXXX") \
@@ -427,26 +469,30 @@ command_build() {
 
   board=$(board_path)
   (umask 077; mkdir -p "${board%/*}") || fail "cannot create ${board%/*}"
-  tmp=$(umask 077; mktemp "${board%/*}/.board.XXXXXX") || fail "cannot stage the board"
-  if ! BOARD_JSON="$json" perl -pe "s/^\\Q$PLACEHOLDER\\E\$/\$ENV{BOARD_JSON}/" "$TEMPLATE" > "$tmp"; then
-    rm -f -- "$tmp"
-    fail "cannot inject the board data"
-  fi
-  if grep -qxF "$PLACEHOLDER" "$tmp"; then
-    rm -f -- "$tmp"
-    fail "the board data slot survived injection"
-  fi
-  # Round-trip the injected payload back out of the built page, so a board that
-  # would fail to parse in the browser fails here instead.
-  extracted=$(sed -n '/<script id="bearings-data" type="application\/json">/,/<\/script>/p' "$tmp" \
-    | sed '1d;$d')
-  if ! printf '%s\n' "$extracted" | jq -e --arg schema "$BOARD_SCHEMA" '.schema == $schema' >/dev/null 2>&1; then
-    rm -f -- "$tmp"
-    fail "the built board does not carry a readable $BOARD_SCHEMA payload"
-  fi
-  if ! { chmod 0600 "$tmp" && mv -f -- "$tmp" "$board"; }; then
-    rm -f -- "$tmp"
-    fail "cannot publish the board"
+  if [ "$recap" -eq 1 ]; then
+    publish_recap_files "$json" "$board"
+  else
+    tmp=$(umask 077; mktemp "${board%/*}/.board.XXXXXX") || fail "cannot stage the board"
+    if ! BOARD_JSON="$json" perl -pe "s/^\\Q$PLACEHOLDER\\E\$/\$ENV{BOARD_JSON}/" "$TEMPLATE" > "$tmp"; then
+      rm -f -- "$tmp"
+      fail "cannot inject the board data"
+    fi
+    if grep -qxF "$PLACEHOLDER" "$tmp"; then
+      rm -f -- "$tmp"
+      fail "the board data slot survived injection"
+    fi
+    # Round-trip the injected payload back out of the built page, so a board that
+    # would fail to parse in the browser fails here instead.
+    extracted=$(sed -n '/<script id="bearings-data" type="application\/json">/,/<\/script>/p' "$tmp" \
+      | sed '1d;$d')
+    if ! printf '%s\n' "$extracted" | jq -e --arg schema "$BOARD_SCHEMA" '.schema == $schema' >/dev/null 2>&1; then
+      rm -f -- "$tmp"
+      fail "the built board does not carry a readable $BOARD_SCHEMA payload"
+    fi
+    if ! { chmod 0600 "$tmp" && mv -f -- "$tmp" "$board"; }; then
+      rm -f -- "$tmp"
+      fail "cannot publish the board"
+    fi
   fi
   printf 'board: %s\n' "$board"
 

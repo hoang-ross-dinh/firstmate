@@ -129,6 +129,7 @@ a { color: inherit; text-decoration: none; }
 .rb-iter { display: inline-flex; align-items: center; gap: 10px; }
 .rb-iter__label { font-weight: 800; color: var(--text-strong); }
 .rb-arrived { font: inherit; font-size: var(--fs-xs); font-weight: 800; cursor: pointer; border: 1px solid var(--status-warn); border-radius: 999px; padding: 2px 10px; background: var(--status-warn-soft); color: var(--text-strong); }
+.rb-stale { max-width: var(--container-app); margin: 0 auto; padding: 0 28px 6px; font-size: var(--fs-xs); font-weight: 800; color: var(--status-warn); }
 .rb-iter__at { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
 .rb-main {
   max-width: var(--container-app); margin: 0 auto;
@@ -207,21 +208,32 @@ a { color: inherit; text-decoration: none; }
 </head>
 
 <body>
-<header class="rb-nav"><div class="rb-nav__inner" id="rb-nav"></div></header>
+<header class="rb-nav"><div class="rb-nav__inner" id="rb-nav"></div><div class="rb-stale" id="rb-stale" role="status" hidden>Live data is stale - showing the last update</div></header>
 <main class="rb-main" id="rb-app"></main>
 <aside class="rb-drawer" id="rb-panel" role="dialog" aria-label="Task detail" hidden></aside>
 
-<script id="bearings-data" type="application/json">
-__FM_BEARINGS_BOARD_DATA__
-</script>
+<!-- The board data is the sibling file the publish rewrites, never this page, so a publish
+     does not reload the page. A classic script tag is the one load that works here: Lavish
+     serves the page in a sandboxed frame with no CORS headers, which blocks fetch and XHR. -->
+<script src="bearings-board.data.js"></script>
 
 <script>
 (function () {
   "use strict";
-  var data = JSON.parse(document.getElementById("bearings-data").textContent);
+  var EMPTY = { iteration: 0, window: 0, iterations: [], tasks: [], warnings: [] };
+  var DATA_SRC = "bearings-board.data.js";
+  var POLL_MS = 10000;
+  function usable(p) {
+    return !!p && typeof p === "object" && Array.isArray(p.tasks) && Array.isArray(p.iterations)
+      && Array.isArray(p.warnings) && typeof p.iteration === "number";
+  }
+  var data = usable(window.__fmBoard) ? window.__fmBoard : EMPTY;
+  var dataSig = data === EMPTY ? "" : JSON.stringify(data);
   var MAIN_HOME = "main";
   var KEEP_FINISHED = 3;
-  var JIRA_BASE = typeof data.jira_base === "string" ? data.jira_base : "";
+  var JIRA_BASE = "";
+  function setJiraBase() { JIRA_BASE = typeof data.jira_base === "string" ? data.jira_base : ""; }
+  setJiraBase();
   var COMMENT_LIMIT = 2000;
   var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
     "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
@@ -368,6 +380,15 @@ __FM_BEARINGS_BOARD_DATA__
       window.lavish.queuePrompt(summary, { tag: "choice", text: text, element: form, data: ctx });
     }
   }
+  /* Fields the reader has edited and not queued. A live data update never rebuilds the
+     panel while one of these holds a draft, so typed text is never lost to a redraw. */
+  var drafts = [];
+  function track(node, form, evt) {
+    var d = { node: node, dirty: false };
+    drafts.push(d);
+    node.addEventListener(evt, function () { d.dirty = true; });
+    form.addEventListener("submit", function () { d.dirty = false; });
+  }
   function questionForm(key) {
     var form = document.createElement("form");
     form.setAttribute("data-lavish-question", key);
@@ -389,9 +410,10 @@ __FM_BEARINGS_BOARD_DATA__
   }
 
   /* ---- live update ----------------------------------------------------- */
-  /* Lavish reloads this page (a full reload of the artifact frame) when a publish
-     rewrites the file, so the reader's place is saved in sessionStorage and put back
-     here. Storage may be absent or throw, and the page renders the same without it. */
+  /* A publish rewrites the sibling data file, not this page, so the page stays loaded
+     and redraws in place (see "live data" below). Lavish still reloads this page when
+     the template itself changes, so the reader's place is saved in sessionStorage and put
+     back here. Storage may be absent or throw, and the page renders the same without it. */
 
   var STORE_KEY = "fm-recap-view";
   var restoreScroll = 0;
@@ -536,6 +558,8 @@ __FM_BEARINGS_BOARD_DATA__
     note.type = "text"; note.name = "note"; note.className = "rb-field";
     note.placeholder = "or answer in your own words";
     form.appendChild(note);
+    radios.forEach(function (r) { track(r, form, "change"); });
+    track(note, form, "input");
     var ui = footer(form, "Queue answer", "primary");
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -597,6 +621,7 @@ __FM_BEARINGS_BOARD_DATA__
     area.name = "comment"; area.className = "rb-field"; area.rows = 3;
     area.placeholder = "Write a comment for the first mate";
     form.appendChild(area);
+    track(area, form, "input");
     var ui = footer(form, "Queue comment", "primary");
     form.addEventListener("submit", function (ev) {
       ev.preventDefault();
@@ -679,6 +704,7 @@ __FM_BEARINGS_BOARD_DATA__
 
   function renderDetail(task) {
     clear(drawer);
+    drafts = [];
     var rev = asOf(task, st.iter) || task.revisions[0];
     var head = el("div", "rb-drawer__head");
     head.appendChild(el("h3", "", (rev.emoji ? rev.emoji + " " : "") + rev.title));
@@ -751,14 +777,87 @@ __FM_BEARINGS_BOARD_DATA__
     if (st.task) data.tasks.forEach(function (t) { if (t.key === st.task) task = t; });
     if (task) { renderDetail(task); return; }
     st.task = null;
+    drafts = [];
     clear(drawer);
     drawer.hidden = true;
   }
   function render() { renderBoard(); renderPanel(); saveView(); }
 
+  /* ---- live data -------------------------------------------------------- */
+  /* Every POLL_MS the page reloads the sibling data file through a fresh script tag and
+     redraws in place only when the payload changed. A redraw waits while the reader is in
+     a field or holds an unqueued draft, and keeps scroll, the open panel and focus. A
+     failed load keeps the last data and shows the stale note. */
+  var pending = null;
+  var staleNote = document.getElementById("rb-stale");
+  var FOCUS_ATTRS = ["data-task", "data-nav", "data-filter", "data-close", "data-new-iteration"];
+  function setStale(on) { if (staleNote) staleNote.hidden = !on; }
+  function attrOf(n, a) { return n && n.getAttribute ? n.getAttribute(a) : null; }
+  function findAttr(root, attr, value) {
+    if (!root) return null;
+    if (attrOf(root, attr) === value) return root;
+    var kids = root.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var hit = findAttr(kids[i], attr, value);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  function focusKey(n) {
+    for (var i = 0; i < FOCUS_ATTRS.length; i++) {
+      var v = attrOf(n, FOCUS_ATTRS[i]);
+      if (v !== null && v !== undefined) return [FOCUS_ATTRS[i], v];
+    }
+    return null;
+  }
+  function busy() {
+    return editable(document.activeElement) || drafts.some(function (d) { return d.dirty; });
+  }
+  function applyPending() {
+    if (!pending || busy()) return;
+    var next = pending, was = data.iteration, first;
+    pending = null;
+    var y = window.scrollY || 0;
+    var top = panelBody && st.task ? panelBody.scrollTop : 0;
+    var focus = focusKey(document.activeElement);
+    data = next; dataSig = JSON.stringify(next); setJiraBase();
+    first = data.iterations.length ? data.iterations[0].seq : data.iteration;
+    if (was === 0) st.iter = data.iteration;
+    else if (data.iteration > was && st.iter < data.iteration) st.arrived = true;
+    st.iter = Math.max(first, Math.min(st.iter, data.iteration));
+    render();
+    openRow = st.task ? findAttr(app, "data-task", st.task) : null;
+    if (window.scrollTo) window.scrollTo(0, y);
+    if (panelBody && st.task) panelBody.scrollTop = top;
+    if (focus) {
+      var target = findAttr(nav, focus[0], focus[1]) || findAttr(app, focus[0], focus[1]) || findAttr(drawer, focus[0], focus[1]);
+      if (target && target.focus) target.focus({ preventScroll: true });
+    }
+    saveView();
+  }
+  function offer(p) {
+    if (JSON.stringify(p) === dataSig) { pending = null; return; }
+    pending = p;
+    applyPending();
+  }
+  function poll() {
+    var s = document.createElement("script");
+    function done(ok) {
+      if (s.parentNode) s.parentNode.removeChild(s);
+      if (ok && usable(window.__fmBoard)) { setStale(false); offer(window.__fmBoard); } else setStale(true);
+    }
+    s.onload = function () { done(true); };
+    s.onerror = function () { done(false); };
+    s.src = DATA_SRC + "?t=" + Date.now();
+    document.head.appendChild(s);
+  }
+  function tick() { applyPending(); poll(); }
+
   render();
   if (restoreScroll && window.scrollTo) window.scrollTo(0, restoreScroll);
   restoreScroll = 0;
+  if (data === EMPTY) poll();
+  setInterval(tick, POLL_MS);
 })();
 </script>
 </body>

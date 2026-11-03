@@ -17,7 +17,14 @@
 //   { "key":    "Escape" }                                 press a key on the document
 //   { "keyin":  { "key": "Home", "name": "comment" } }     press a key with a named field focused; records it in keys
 //   { "scroll": 600 }                                      set the page scroll position, firing scroll listeners
-// Prints one JSON document: { nodes, queued, scrollY, keys, error }.
+//   { "focus":  { "name": "comment" } }                    focus a named field
+//   { "blur":   true }                                     drop focus
+//   { "panelscroll": 300 }                                 set the open detail panel scroll position
+//   { "poll":   { "file": "<data.js>" } }                  run one poll tick; the page loads this data file
+//   { "poll":   { "fail": true } }                         run one poll tick whose data load fails
+// The page's first payload is the bearings-board.data.js next to the built board, as the
+// browser loads it through the board's script tag.
+// Prints one JSON document: { nodes, queued, scrollY, keys, error, focused }.
 //   keys    one {key, field, prevented, stopped} per key action; nodes carry scrollTop (the shim's clientHeight is 1000)
 //   scrollY page scroll position. The shim resets it to 0 whenever the list
 //           container is cleared, a conservative stand-in for a browser clamping
@@ -27,6 +34,7 @@
 //   scrolledTo  the last window.scrollTo y the page asked for, or null
 //   queued  every window.lavish.queuePrompt call: {summary, tag, text, data, question}
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const html = readFileSync(process.argv[2], "utf8");
 const actions = process.argv[3] && process.argv[3] !== "-" ? JSON.parse(readFileSync(process.argv[3], "utf8")) : [];
@@ -49,6 +57,8 @@ class Node {
     this.scrollTop = 0;
     this.clientHeight = 1000;
   }
+  getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }
+  removeChild(n) { this.children = this.children.filter((c) => c !== n); n.parentNode = null; return n; }
   get textContent() {
     return this.children.length ? this.children.map((c) => c.textContent).join("") : this._text;
   }
@@ -56,8 +66,12 @@ class Node {
     this._text = String(v); this.children = [];
     if (this.onClear) this.onClear();
   }
-  focus() {}
-  appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
+  focus() { document.activeElement = this; }
+  appendChild(n) {
+    n.parentNode = this; this.children.push(n);
+    if (this.deliver) this.deliver(n);
+    return n;
+  }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   fire(type) {
@@ -71,18 +85,25 @@ const all = (root, out = []) => {
   return out;
 };
 
+const readPayload = (file) =>
+  JSON.parse(readFileSync(file, "utf8").replace(/^window\.__fmBoard = /, "").replace(/;\s*$/, ""));
 const byId = new Map();
-const dataNode = new Node("script");
-dataNode.textContent = html
-  .split('<script id="bearings-data" type="application/json">')[1]
-  .split("</script>")[0];
-byId.set("bearings-data", dataNode);
-for (const id of ["rb-nav", "rb-app", "rb-panel"]) {
+const timers = [];
+let nextLoad = null; // what the next injected data script does: { file } or { fail }
+const head = new Node("head");
+head.deliver = (s) => {
+  if (s.tagName !== "script" || !s.src) return;
+  if (!nextLoad || nextLoad.fail) { if (s.onerror) s.onerror(); return; }
+  window.__fmBoard = readPayload(nextLoad.file);
+  if (s.onload) s.onload();
+};
+for (const id of ["rb-nav", "rb-app", "rb-panel", "rb-stale"]) {
   const n = new Node("div");
   n.setAttribute("id", id);
   byId.set(id, n);
 }
 byId.get("rb-panel").hidden = true; // the template markup ships the panel closed
+byId.get("rb-stale").hidden = true; // and the stale note hidden
 byId.get("rb-app").onClear = () => { window.scrollY = 0; };
 const keyListeners = [];
 
@@ -102,6 +123,8 @@ const press = (key, target) => {
   keyListeners.forEach((fn) => fn({ key, target, preventDefault() { rec.prevented = true; }, stopPropagation() { rec.stopped = true; } }));
 };
 globalThis.document = {
+  head,
+  activeElement: null,
   createElement: (tag) => new Node(tag),
   getElementById: (id) => byId.get(id) ?? new Node("div"),
   addEventListener: (type, fn) => { if (type === "keydown") keyListeners.push(fn); },
@@ -109,6 +132,7 @@ globalThis.document = {
 globalThis.window = {
   sessionStorage: storagePath ? sessionStorage : undefined,
   scrollY: 0,
+  __fmBoard: readPayload(join(dirname(process.argv[2]), "bearings-board.data.js")),
   addEventListener: (type, fn) => { if (type === "scroll") scrollListeners.push(fn); },
   scrollTo: (x, y) => { scrolledTo = y; window.scrollY = y; },
   lavish: {
@@ -123,12 +147,13 @@ globalThis.window = {
   },
 };
 globalThis.TextEncoder = TextEncoder;
+globalThis.setInterval = (fn) => { timers.push(fn); return timers.length; };
 
 const script = html.slice(html.indexOf("<script>") + "<script>".length, html.lastIndexOf("</script>"));
 let error = "";
 try {
   new Function(script)();
-  const roots = () => ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id)));
+  const roots = () => ["rb-nav", "rb-app", "rb-panel", "rb-stale"].flatMap((id) => all(byId.get(id)));
   for (const a of actions) {
     const [kind, arg] = Object.entries(a)[0];
     const nodes = roots();
@@ -150,10 +175,25 @@ try {
       const n = nodes.find((x) => x.tagName === "input" && x.type === "radio" && x.value === arg.value);
       if (!n) throw new Error("no radio: " + JSON.stringify(arg));
       n.checked = true;
+      n.fire("change");
     } else if (kind === "fill") {
       const n = nodes.find((x) => x.name === arg.name);
       if (!n) throw new Error("no field: " + JSON.stringify(arg));
       n.value = arg.value;
+      n.fire("input");
+    } else if (kind === "focus") {
+      const n = nodes.find((x) => x.name === arg.name);
+      if (!n) throw new Error("no field: " + JSON.stringify(arg));
+      n.focus();
+    } else if (kind === "blur") {
+      document.activeElement = null;
+    } else if (kind === "panelscroll") {
+      const n = nodes.find((x) => x.className === "rb-drawer__body");
+      if (!n) throw new Error("no open panel");
+      n.scrollTop = arg;
+    } else if (kind === "poll") {
+      nextLoad = arg;
+      timers.forEach((fn) => fn());
     } else if (kind === "submit") {
       const n = nodes.find((x) => x.tagName === "form" && x.attributes["data-lavish-question"] === arg.question);
       if (!n) throw new Error("no form: " + JSON.stringify(arg));
@@ -164,7 +204,7 @@ try {
   error = String(e && e.message ? e.message : e);
 }
 
-const nodes = ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id))).map((n) => ({
+const nodes = ["rb-nav", "rb-app", "rb-panel", "rb-stale"].flatMap((id) => all(byId.get(id))).map((n) => ({
   tag: n.tagName,
   cls: n.className,
   text: n.textContent,
@@ -174,4 +214,5 @@ const nodes = ["rb-nav", "rb-app", "rb-panel"].flatMap((id) => all(byId.get(id))
   scrollTop: n.scrollTop,
 }));
 if (storagePath) writeFileSync(storagePath, JSON.stringify(Object.fromEntries(store)));
-process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, scrolledTo, keys, error }) + "\n");
+process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, scrolledTo, keys, error,
+  focused: document.activeElement ? { tag: document.activeElement.tagName, name: document.activeElement.name, attrs: document.activeElement.attributes } : null }) + "\n");

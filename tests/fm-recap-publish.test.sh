@@ -123,6 +123,11 @@ refresh_board() {  # <home>
   printf '%s/.lavish/bearings-board.html\n' "$1"
 }
 
+# The payload a built board's page loads: the sibling data file, unwrapped to JSON.
+board_payload() {  # <board>
+  sed '1s/^window\.__fmBoard = //;$s/;$//' "${1%/*}/bearings-board.data.js"
+}
+
 # Render a built board, optionally driving it with an actions array and a
 # sessionStorage file that persists between renders (a reload of the page).
 render() {  # <board> [actions-json] [storage-file]
@@ -310,7 +315,7 @@ test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_li
   done
   printf '%s' "$entries" > "$(log_of "$home")"
   board=$(refresh_board "$home")
-  out=$(sed -n '/<script id="bearings-data"/,/<\/script>/p' "$board" | sed '1d;$d')
+  out=$(board_payload "$board")
   printf '%s' "$out" | jq -e '
     (.tasks[0].revisions | length) == 31 and (.tasks[0].older | length) == 4
     and (.tasks[0].older[0].line | test("v4")) and (.iterations | length) == 30' >/dev/null \
@@ -373,7 +378,7 @@ test_a_live_update_keeps_the_readers_place_and_badges_the_new_iteration() {
   out=$(render "$board" '[{"click":{"attr":"data-nav","value":"prev"}},{"click":{"attr":"data-task","value":"a"}},{"scroll":240}]' "$storage")
   [ "$(printf '%s' "$out" | label_of)" = "Iteration 2 of 3" ] || fail "setup did not reach iteration 2"
   # A publish adds iteration 4 and Lavish reloads the page: same storage, rebuilt board.
-  entry 4 '["a","b","c"]' "{\"a\": $(rev a done "Task A" '{"theme":"LW","summary":"A done"}')}" >> "$(log_of "$home")"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a "done" "Task A" '{"theme":"LW","summary":"A done"}')}" >> "$(log_of "$home")"
   board=$(refresh_board "$home")
   out=$(render "$board" "" "$storage")
   printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the reloaded board errored: $out"
@@ -555,7 +560,7 @@ test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll(
 }
 
 test_panel_page_keys_scroll_the_panel_and_leave_editing_keys_to_the_comment_field() {
-  local home board out open
+  local home board out open poll
   home=$(make_home panel-keys)
   seed_views_log "$home"
   board=$(refresh_board "$home")
@@ -853,6 +858,147 @@ test_a_repeated_delivery_of_one_capture_replays_the_same_note() {
   pass "a repeated delivery of one capture replays the same inbox note"
 }
 
+# --- static page and sibling data file ---------------------------------------
+
+inode_of() { perl -e '@s = stat($ARGV[0]); print "$s[1]\n"' "$1"; }
+
+test_a_data_only_publish_leaves_the_board_page_untouched() {
+  local home board before after sum
+  home=$(make_home static-page)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  before=$(inode_of "$board")
+  sum=$(cksum < "$board")
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a "done" "Task A" '{"theme":"LW","summary":"A done"}')}" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  after=$(inode_of "$board")
+  [ "$before" = "$after" ] || fail "an ordinary iteration rewrote the board page"
+  [ "$sum" = "$(cksum < "$board")" ] || fail "an ordinary iteration changed the board page bytes"
+  [ "$(board_payload "$board" | jq .iteration)" = 4 ] || fail "the data file did not carry the new iteration"
+  pass "an ordinary iteration rewrites the data file and leaves the board page byte-identical"
+}
+
+test_a_changed_template_rewrites_the_board_page_once() {
+  local home board tpl before out
+  home=$(make_home template-change)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  tpl="$TMP_ROOT/template-change.html"
+  { cat "$ROOT/.agents/skills/bearings/assets/recap-board-template.html"; printf '<!-- template v2 -->\n'; } > "$tpl"
+  home_run "$home" env FM_RECAP_BOARD_TEMPLATE="$tpl" "$PUBLISH" refresh >/dev/null || fail "refresh with a changed template failed"
+  cmp -s "$tpl" "$board" || fail "a changed template did not reach the board page"
+  before=$(inode_of "$board")
+  home_run "$home" env FM_RECAP_BOARD_TEMPLATE="$tpl" "$PUBLISH" refresh >/dev/null || fail "second refresh failed"
+  [ "$before" = "$(inode_of "$board")" ] || fail "an unchanged template was rewritten again"
+  out=$(board_payload "$board" | jq -r .schema)
+  [ "$out" = fm-recap-board.v1 ] || fail "the data file lost its payload: $out"
+  pass "the board page is rewritten when the template changes and only then"
+}
+
+test_the_data_file_is_replaced_atomically() {
+  local home board dir bad=0 i flag sum reader
+  home=$(make_home atomic-data)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  flag="$TMP_ROOT/atomic-stop"
+  rm -f "$flag" "$TMP_ROOT/atomic-bad"
+  (
+    while [ ! -e "$flag" ]; do
+      board_payload "$board" 2>/dev/null | jq -e '.schema == "fm-recap-board.v1"' >/dev/null 2>&1 \
+        || printf 'x\n' >> "$TMP_ROOT/atomic-bad"
+    done
+  ) &
+  reader=$!
+  for i in 5 6 7 8; do
+    entry "$i" '["a","b","c"]' "{\"a\": $(rev a "done" "Task A" "{\"summary\":\"v$i\"}")}" >> "$(log_of "$home")"
+    home_run "$home" "$PUBLISH" refresh >/dev/null || { : > "$flag"; wait "$reader"; fail "refresh failed"; }
+  done
+  : > "$flag"
+  wait "$reader"
+  [ ! -e "$TMP_ROOT/atomic-bad" ] || fail "a reader saw a missing or torn data file during a publish"
+  [ -z "$(find "$dir" -maxdepth 1 -name '.board.*')" ] || fail "a staging file was left behind"
+  sum=$(cksum < "$dir/bearings-board.data.js")
+  printf '{"schema":"fm-recap-board.v1"}' > "$TMP_ROOT/bad-recap.json"
+  ! home_run "$home" "$ROOT/bin/fm-bearings-board.sh" build "$TMP_ROOT/bad-recap.json" >/dev/null 2>&1 \
+    || fail "an invalid payload was accepted"
+  [ "$sum" = "$(cksum < "$dir/bearings-board.data.js")" ] || fail "a refused build altered the data file"
+  pass "the data file is replaced atomically and a refused build leaves it untouched"
+}
+
+# A board at iteration 3 on disk, plus the iteration-4 data file a later publish writes
+# at $TMP_ROOT/poll-new-<home name>.js. Prints the board path.
+poll_fixture() {  # <home>
+  local home=$1 board dir
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/poll-old.js"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a "done" "Task A" '{"theme":"LW","summary":"A done"}')}" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/poll-new-${home##*/}.js"
+  cp "$TMP_ROOT/poll-old.js" "$dir/bearings-board.data.js"
+  printf '%s\n' "$board"
+}
+
+stale_shown() { jq -e '[.nodes[] | select(.attrs.id == "rb-stale") | .hidden] | .[0] == false' >/dev/null; }
+
+test_a_poll_redraws_in_place_keeping_scroll_panel_and_focus() {
+  local home board out acts
+  home=$(make_home poll-redraw)
+  board=$(poll_fixture "$home")
+  POLL_NEW="$TMP_ROOT/poll-new-${home##*/}.js"
+  acts="[{\"scroll\":240},{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"panelscroll\":300},{\"poll\":{\"file\":\"$POLL_NEW\"}}]"
+  out=$(render "$board" "$acts")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the poll errored: $out"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "the poll did not load the new data: $(printf '%s' "$out" | label_of)"
+  [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "no arrival badge after the poll"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | any(test("Task A$"))' >/dev/null \
+    || fail "the poll closed the open task detail"
+  [ "$(printf '%s' "$out" | jq '.scrolledTo')" = 240 ] || fail "the poll lost the page scroll"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-drawer__body") | .scrollTop] == [300]' >/dev/null \
+    || fail "the poll lost the panel scroll"
+  printf '%s' "$out" | jq -e '.focused.attrs["data-close"] == "1"' >/dev/null || fail "the poll lost focus: $(printf '%s' "$out" | jq -c .focused)"
+  printf '%s' "$out" | stale_shown && fail "a good poll showed the stale note"
+  out=$(render "$board" "[{\"poll\":{\"file\":\"$TMP_ROOT/poll-old.js\"}}]")
+  [ "$(printf '%s' "$out" | jq '.scrolledTo')" = null ] || fail "an unchanged payload redrew the page"
+  pass "a poll redraws in place and keeps the page scroll, the open panel and its scroll, and focus, and skips unchanged data"
+}
+
+test_a_poll_waits_while_a_field_has_focus_or_unsent_text() {
+  local home board out open poll
+  home=$(make_home poll-guard)
+  board=$(poll_fixture "$home")
+  POLL_NEW="$TMP_ROOT/poll-new-${home##*/}.js"
+  open='{"click":{"attr":"data-task","value":"a"}}'
+  poll="{\"poll\":{\"file\":\"$POLL_NEW\"}}"
+  out=$(render "$board" "[$open,{\"fill\":{\"name\":\"comment\",\"value\":\"draft text\"}},$poll,$poll]")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 3" ] || fail "a poll redrew over an unsent comment"
+  out=$(render "$board" "[$open,{\"focus\":{\"name\":\"comment\"}},$poll]")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 3" ] || fail "a poll redrew while a field had focus"
+  out=$(render "$board" "[$open,{\"focus\":{\"name\":\"comment\"}},$poll,{\"blur\":true},$poll]")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "the held update was not applied after focus left"
+  out=$(render "$board" "[$open,{\"fill\":{\"name\":\"comment\",\"value\":\"draft text\"}},$poll,{\"submit\":{\"question\":\"comment.a\"}},$poll]")
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "the held update was not applied after the draft was queued"
+  printf '%s' "$out" | jq -e '.queued | length == 1' >/dev/null || fail "the draft was not queued before the redraw"
+  pass "a poll waits while a field has focus or unsent text and applies the update after"
+}
+
+test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note() {
+  local home board out
+  home=$(make_home poll-stale)
+  board=$(poll_fixture "$home")
+  POLL_NEW="$TMP_ROOT/poll-new-${home##*/}.js"
+  out=$(render "$board" '[{"poll":{"fail":true}}]')
+  printf '%s' "$out" | stale_shown || fail "a failed poll showed no stale note"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 3" ] || fail "a failed poll changed the data"
+  [ "$(printf '%s' "$out" | jq '.scrolledTo')" = null ] || fail "a failed poll redrew the page"
+  out=$(render "$board" "[{\"poll\":{\"fail\":true}},{\"poll\":{\"file\":\"$POLL_NEW\"}}]")
+  printf '%s' "$out" | stale_shown && fail "the stale note stayed after a good poll"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "the poll after a failure did not load the data"
+  pass "a failed poll keeps the last data with a stale note that clears on the next good poll"
+}
+
 fm_test_run \
   test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer \
   test_a_secondmate_answer_reaches_the_first_mate_as_one_answer_note \
@@ -895,4 +1041,10 @@ fm_test_run \
   test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge \
   test_merge_and_dispatch_buttons_reuse_the_existing_routes \
   test_a_comment_queues_with_the_question_markup_and_shows_its_reply \
-  test_a_comment_reply_renders_under_its_comment
+  test_a_comment_reply_renders_under_its_comment \
+  test_a_data_only_publish_leaves_the_board_page_untouched \
+  test_a_changed_template_rewrites_the_board_page_once \
+  test_the_data_file_is_replaced_atomically \
+  test_a_poll_redraws_in_place_keeping_scroll_panel_and_focus \
+  test_a_poll_waits_while_a_field_has_focus_or_unsent_text \
+  test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note
