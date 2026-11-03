@@ -294,6 +294,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/update-my-firstmate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".greptile/rules.md",
       "audience": "maintainer-architecture"
     },
