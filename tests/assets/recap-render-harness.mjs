@@ -97,11 +97,12 @@ head.deliver = (s) => {
   window.__fmBoard = readPayload(nextLoad.file);
   if (s.onload) s.onload();
 };
-for (const id of ["rb-nav", "rb-app", "rb-panel", "rb-stale"]) {
+for (const id of ["rb-page", "rb-nav", "rb-app", "rb-panel", "rb-stale"]) {
   const n = new Node("div");
   n.setAttribute("id", id);
   byId.set(id, n);
 }
+byId.get("rb-page").className = "rb-page"; // the wrapper around the nav and the list
 byId.get("rb-panel").hidden = true; // the template markup ships the panel closed
 byId.get("rb-stale").hidden = true; // and the stale note hidden
 byId.get("rb-app").onClear = () => { window.scrollY = 0; };
@@ -204,7 +205,7 @@ try {
   error = String(e && e.message ? e.message : e);
 }
 
-const nodes = ["rb-nav", "rb-app", "rb-panel", "rb-stale"].flatMap((id) => all(byId.get(id))).map((n) => ({
+const nodes = [byId.get("rb-page"), ...["rb-nav", "rb-app", "rb-panel", "rb-stale"].flatMap((id) => all(byId.get(id)))].map((n) => ({
   tag: n.tagName,
   cls: n.className,
   text: n.textContent,

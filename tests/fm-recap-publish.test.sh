@@ -591,6 +591,29 @@ test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll(
   pass "the panel closes with its close button or Escape and the list keeps its scroll position"
 }
 
+# Lavish flags text that an opaque panel covers as a layout issue. A queued layout issue
+# blocks every Send to Agent once the page reloads (Lavish 0.1.96), so the open panel must
+# clip the page behind it rather than paint over it.
+test_the_open_panel_clips_the_page_behind_it_so_no_text_is_covered() {
+  local home board out page
+  home=$(make_home panel-clip)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  grep -q '\.rb-page--covered { clip-path: inset(0 var(--rb-drawer-w) 0 0)' "$board" \
+    || fail "the board has no clip rule for the page behind the open panel"
+  page='[.nodes[] | select(.attrs.id == "rb-page") | .cls]'
+  out=$(render "$board" '[]')
+  printf '%s' "$out" | jq -e "$page == [\"rb-page\"]" >/dev/null || fail "the page is clipped while no panel is open: $out"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e "$page == [\"rb-page rb-page--covered\"]" >/dev/null \
+    || fail "the page behind the open panel is not clipped: $(printf '%s' "$out" | jq -c "$page")"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}},{"click":{"attr":"data-close","value":"1"}}]')
+  printf '%s' "$out" | jq -e "$page == [\"rb-page\"]" >/dev/null || fail "the close button left the page clipped"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}},{"key":"Escape"}]')
+  printf '%s' "$out" | jq -e "$page == [\"rb-page\"]" >/dev/null || fail "Escape left the page clipped"
+  pass "the open panel clips the page behind it and the clip clears when the panel closes"
+}
+
 test_panel_page_keys_scroll_the_panel_and_leave_editing_keys_to_the_comment_field() {
   local home board out open poll
   home=$(make_home panel-keys)
@@ -987,6 +1010,8 @@ test_a_poll_redraws_in_place_keeping_scroll_panel_and_focus() {
   [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "no arrival badge after the poll"
   printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | any(test("Task A$"))' >/dev/null \
     || fail "the poll closed the open task detail"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.attrs.id == "rb-page") | .cls] == ["rb-page rb-page--covered"]' >/dev/null \
+    || fail "the poll left the page behind the open panel unclipped"
   [ "$(printf '%s' "$out" | jq '.scrolledTo')" = 240 ] || fail "the poll lost the page scroll"
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-drawer__body") | .scrollTop] == [300]' >/dev/null \
     || fail "the poll lost the panel scroll"
@@ -1214,6 +1239,7 @@ fm_test_run \
   test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs \
   test_a_task_detail_opens_as_a_panel_over_the_list_without_moving_the_list \
   test_the_panel_closes_with_its_close_button_or_escape_and_keeps_the_list_scroll \
+  test_the_open_panel_clips_the_page_behind_it_so_no_text_is_covered \
   test_panel_page_keys_scroll_the_panel_and_leave_editing_keys_to_the_comment_field \
   test_the_panel_header_pins_the_title_and_close_button_and_the_back_link_is_gone \
   test_a_freshly_loaded_board_starts_with_the_panel_closed_and_the_list_rendered \

@@ -200,8 +200,9 @@ a { color: inherit; text-decoration: none; }
 .rb-warn { padding: 10px 14px; display: flex; gap: 12px; align-items: baseline; }
 /* Task detail: a panel that slides in from the right over the list. The list is
    never rebuilt on open or close, so it keeps its scroll position. */
+:root { --rb-drawer-w: 70vw; }
 .rb-drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: 70vw;
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: var(--rb-drawer-w);
   display: flex; flex-direction: column;
   background: var(--bg-page); background-image: var(--texture-paper);
   border-left: 2px solid var(--ink-900); box-shadow: -6px 0 0 rgba(36, 28, 20, 0.12);
@@ -215,14 +216,23 @@ a { color: inherit; text-decoration: none; }
 .rb-drawer__head h3 { margin: 0; font-size: var(--fs-h4); color: var(--text-strong); }
 .rb-drawer__body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 18px 22px 48px; }
 @keyframes rb-slide-in { from { transform: translateX(100%); } to { transform: none; } }
-@media (max-width: 720px) { .rb-drawer { width: 100vw; } }
-@media (prefers-reduced-motion: reduce) { .rb-drawer { animation: none; } }
+/* While the panel is open the page behind it is clipped to the strip the panel leaves
+   visible, and the clip slides in with the panel. Text under the panel is then not
+   painted, so Lavish's layout check sees an intentional mask instead of text an opaque
+   panel covers. Covered text is a layout issue a reader could queue, and a queued
+   layout issue blocks every Send to Agent after the page reloads (Lavish 0.1.96). */
+.rb-page--covered { clip-path: inset(0 var(--rb-drawer-w) 0 0); animation: rb-clip-in 180ms ease-out; }
+@keyframes rb-clip-in { from { clip-path: inset(0 0 0 0); } }
+@media (max-width: 720px) { :root { --rb-drawer-w: 100vw; } }
+@media (prefers-reduced-motion: reduce) { .rb-drawer, .rb-page--covered { animation: none; } }
 </style>
 </head>
 
 <body>
+<div class="rb-page" id="rb-page">
 <header class="rb-nav"><div class="rb-nav__inner" id="rb-nav"></div><div class="rb-stale" id="rb-stale" role="status" hidden>Live data is stale - showing the last update</div></header>
 <main class="rb-main" id="rb-app"></main>
+</div>
 <aside class="rb-drawer" id="rb-panel" role="dialog" aria-label="Task detail" hidden></aside>
 
 <!-- The board data is the sibling file the publish rewrites, never this page, so a publish
@@ -500,6 +510,7 @@ a { color: inherit; text-decoration: none; }
   var nav = document.getElementById("rb-nav");
   var app = document.getElementById("rb-app");
   var drawer = document.getElementById("rb-panel");
+  var page = document.getElementById("rb-page");
   var openRow = null;
   var panelBody = null;
 
@@ -826,6 +837,7 @@ a { color: inherit; text-decoration: none; }
     body.appendChild(box);
     drawer.appendChild(body);
     drawer.hidden = false;
+    page.className = "rb-page rb-page--covered";
     close.focus({ preventScroll: true });
   }
 
@@ -866,6 +878,7 @@ a { color: inherit; text-decoration: none; }
     drafts = [];
     clear(drawer);
     drawer.hidden = true;
+    page.className = "rb-page";
   }
   function render() { renderBoard(); renderPanel(); saveView(); }
 
