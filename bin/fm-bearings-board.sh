@@ -231,7 +231,6 @@ validate_recap_payload() {  # <data.json>
     def task:
       type == "object" and (.key | str and length > 0) and (.id | str) and (.home | str)
       and (.revisions | type == "array") and ([.revisions[] | revision] | all)
-      and (.older | type == "array") and ([.older[] | type == "object" and (.iter | type == "number") and (.line | str)] | all)
       and (.comments | type == "array");
     type == "object" and .schema == $schema
     and (.home | str and length > 0) and (.generated | str and length > 0)

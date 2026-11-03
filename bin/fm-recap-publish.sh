@@ -64,8 +64,9 @@
 # such as https://jira.example.test/browse/ that the board puts before a Jira key
 # to make a link. Without it a key shows as plain text.
 #
-# THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations of every task's
-# history in full and each older revision as one line. The log keeps everything.
+# THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations are navigable,
+# and every task carries all of its revisions in full, so the board renders each
+# one as the same card. The log keeps everything.
 #
 # FM_RECAP_COLLECT_FILE (tests only) replaces the backlog collection with a
 # JSON file of the shape { "tasks": [...], "warnings": [...] }.
@@ -324,8 +325,7 @@ compose_board() {  # <entries.json> <home-name>
     ($entries[0] | sort_by(.seq)) as $entries
     | ($entries | last) as $latest
     | ($latest.seq - $window) as $floor
-    | def one_line: (.state // "") + (if (.summary // "") != "" then " - " + .summary else "" end);
-    {
+    | {
       schema: $schema,
       home: $home,
       jira_base: $jira,
@@ -339,16 +339,14 @@ compose_board() {  # <entries.json> <home-name>
         | group_by(.key)
         | map(
             (.[-1].rev) as $cur
-            # Full: every revision inside the window plus the newest one at or
-            # before its edge, so any iteration in the window can show the task
-            # as it stood. Everything older is one line.
-            | ([.[] | select(.seq <= $floor)] | last) as $base
+            # Every revision stays in full: a one-line older tail rendered in a
+            # second style and left the oldest card without a diff.
+            # ponytail: payload grows with the log, cap by count if it gets large
             | {
               key: .[0].key,
               id: $cur.id,
               home: $cur.home,
-              revisions: ([.[] | select(.seq > $floor or . == $base) | .rev + {iter: .seq}] | reverse),
-              older: ([.[] | select(.seq <= $floor and . != $base) | {iter: .seq, line: (.rev | one_line)}] | reverse)
+              revisions: ([.[] | .rev + {iter: .seq}] | reverse)
             })
       )
     }'

@@ -186,13 +186,15 @@ a { color: inherit; text-decoration: none; }
 .rb-limit { color: var(--status-danger); font-size: var(--fs-xs); }
 .rb-rev { border-left: 3px solid var(--border-default); padding: 4px 0 4px 12px; display: flex; flex-direction: column; gap: 4px; }
 .rb-rev__head { font-weight: 800; color: var(--text-strong); }
-.rb-change { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-body); word-break: break-word; }
+.rb-rev { min-width: 0; }
+.rb-change { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-body); word-break: break-word; overflow-wrap: anywhere; min-width: 0; }
+.rb-val { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: baseline; max-width: 100%; overflow-wrap: anywhere; }
+.rb-val__item { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; overflow-wrap: anywhere; }
 .rb-old { color: var(--status-danger); text-decoration: line-through; }
 .rb-new { color: var(--status-online); }
 .rb-diff { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; margin: 4px 0; padding: 8px; background: var(--paper-000); border-radius: var(--radius-sm); }
 .rb-diff__add { color: var(--status-online); }
 .rb-diff__del { color: var(--status-danger); }
-.rb-older { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
 .rb-comment { border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); }
 .rb-reply { margin: 6px 0 0 16px; padding-left: 10px; border-left: 3px solid var(--sea-500); }
 .rb-warn { padding: 10px 14px; display: flex; gap: 12px; align-items: baseline; }
@@ -364,6 +366,38 @@ a { color: inherit; text-decoration: none; }
   function fieldText(v) {
     if (v === undefined || v === null || v === "") return "(empty)";
     return typeof v === "string" ? v : JSON.stringify(v);
+  }
+  /* A changed value as readable nodes, never raw JSON. A link list becomes the same
+     chips as Tickets & MRs; any other list or object becomes "key: value" items. */
+  function flat(x) {
+    if (x === undefined || x === null || x === "") return "(empty)";
+    if (Array.isArray(x)) return x.length ? x.map(flat).join(", ") : "(empty)";
+    if (typeof x === "object") {
+      var ks = Object.keys(x);
+      return ks.length ? ks.map(function (k) { return k + ": " + flat(x[k]); }).join(", ") : "(empty)";
+    }
+    return String(x);
+  }
+  function valueNode(cls, v) {
+    var box = el("span", cls);
+    if (v === null || typeof v !== "object" || (Array.isArray(v) ? !v.length : !Object.keys(v).length)) {
+      box.textContent = fieldText(v);
+      return box;
+    }
+    box.className = cls + " rb-val";
+    (Array.isArray(v) ? v : Object.keys(v).map(function (k) { return { k: k, v: v[k] }; })).forEach(function (item) {
+      var one = el("span", "rb-val__item"), ok = xlinks({ links: [item] });
+      if (ok.length) {
+        one.appendChild(xlink("rb-xlink rb-xlink--hist", ok[0]));
+        if (typeof item.text === "string" && item.text) one.appendChild(el("span", "", item.text));
+      } else if (!Array.isArray(v)) {
+        one.textContent = item.k + ": " + flat(item.v);
+      } else {
+        one.textContent = flat(item);
+      }
+      box.appendChild(one);
+    });
+    return box;
   }
   function changedFields(newer, older) {
     var out = [];
@@ -697,7 +731,7 @@ a { color: inherit; text-decoration: none; }
       box.appendChild(el("div", "rb-rev__head", "Iteration " + rev.iter));
       var older = task.revisions[i + 1];
       if (!older) {
-        box.appendChild(el("div", "rb-row__sub", task.older.length ? "earlier revisions are listed below" : "first revision"));
+        box.appendChild(el("div", "rb-row__sub", "first revision"));
       } else {
         changedFields(rev, older).forEach(function (c) {
           var line = el("div", "rb-change");
@@ -720,17 +754,14 @@ a { color: inherit; text-decoration: none; }
             line.appendChild(btn);
             line.appendChild(diff);
           } else {
-            line.appendChild(el("span", "rb-old", fieldText(c.from)));
+            line.appendChild(valueNode("rb-old", c.from));
             line.appendChild(el("span", "", " -> "));
-            line.appendChild(el("span", "rb-new", fieldText(c.to)));
+            line.appendChild(valueNode("rb-new", c.to));
           }
           box.appendChild(line);
         });
       }
       panel.appendChild(box);
-    });
-    task.older.forEach(function (o) {
-      panel.appendChild(el("div", "rb-older", "iteration " + o.iter + ": " + o.line));
     });
     parent.appendChild(panel);
   }

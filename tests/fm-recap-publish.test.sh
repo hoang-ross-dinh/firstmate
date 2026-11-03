@@ -307,7 +307,7 @@ test_an_invalid_recap_publishes_nothing() {
 
 # --- board views ------------------------------------------------------------
 
-test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_line() {
+test_the_display_window_keeps_the_last_30_iterations_and_every_revision_full() {
   local home board out i entries=''
   home=$(make_home window)
   for i in $(seq 1 35); do
@@ -317,11 +317,43 @@ test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_li
   board=$(refresh_board "$home")
   out=$(board_payload "$board")
   printf '%s' "$out" | jq -e '
-    (.tasks[0].revisions | length) == 31 and (.tasks[0].older | length) == 4
-    and (.tasks[0].older[0].line | test("v4")) and (.iterations | length) == 30' >/dev/null \
-    || fail "the board payload did not keep 30 iterations in full and one line per older revision: $(printf '%s' "$out" | jq -c '[(.tasks[0].revisions|length),(.tasks[0].older|length),(.iterations|length)]')"
+    (.tasks[0].revisions | length) == 35 and (.tasks[0] | has("older") | not)
+    and (.tasks[0].revisions[-1].summary == "v1") and (.iterations | length) == 30' >/dev/null \
+    || fail "the board payload did not keep 30 iterations and every revision in full: $(printf '%s' "$out" | jq -c '[(.tasks[0].revisions|length),(.tasks[0]|has("older")),(.iterations|length)]')"
   [ "$(wc -l < "$(log_of "$home")" | tr -d ' ')" = 35 ] || fail "the display window altered the log"
-  pass "the display window shows 30 iterations in full, older revisions as one line, and the log keeps all"
+  pass "the display window shows 30 iterations, every revision stays in full, and the log keeps all"
+}
+
+# A task with more revisions than the old 30-iteration tail kept in full, a links
+# change near the top and an older tail below: every revision is one card, links
+# read as chips, no list or object value shows as JSON, and a long value wraps.
+test_every_history_revision_is_one_card_with_readable_values() {
+  local home board out i entries='' extra
+  home=$(make_home history-cards)
+  for i in $(seq 1 36); do
+    extra="{\"summary\":\"v$i\",\"reply_terms\":[\"go$i\",\"later\"]"
+    [ "$i" -lt 34 ] || extra="$extra,\"links\":$LINKS_FIXTURE"
+    extra="$extra}"
+    entries="$entries$(entry "$i" '["a"]' "{\"a\": $(rev a queued "Task A" "$extra")}")"$'\n'
+  done
+  printf '%s' "$entries" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the board errored: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-rev__head") | .text] | length == 36 and .[0] == "Iteration 36" and .[35] == "Iteration 1"' >/dev/null \
+    || fail "not every revision rendered as a card: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-rev__head") | .text] | length')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-older"))] | length == 0 and ([.nodes[].text] | all(. == null or (test("earlier revisions|^iteration [0-9]+: ") | not)))' >/dev/null \
+    || fail "a plain older line or the placeholder card is still rendered"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.text == "first revision")] | length == 1' >/dev/null \
+    || fail "only the first revision should read as first revision"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | any(test("^links: "))' >/dev/null \
+    || fail "the links change is missing from the history"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | all(test("[{}\\[\\]\"]") | not)' >/dev/null \
+    || fail "a history change shows raw JSON: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-change") | .text] | map(select(test("[{}\\[\\]\"]")))')"
+  printf '%s' "$out" | link_anchors | jq -e '[.[] | select(.cls == "rb-xlink rb-xlink--hist")] | length >= 6 and all(.[]; .attrs.target == "_blank" and .attrs.rel == "noopener noreferrer" and (.attrs.href | startswith("https://example.invalid/")))' >/dev/null \
+    || fail "the history links are not chips that open safely: $(printf '%s' "$out" | link_anchors)"
+  grep -Eq '\.rb-change \{[^}]*overflow-wrap: anywhere' "$board" || fail "a long history value has no wrap style"
+  pass "every history revision is one card, a links change reads as chips, no JSON shows, and long values wrap"
 }
 
 seed_views_log() {  # <home>
@@ -1168,7 +1200,7 @@ fm_test_run \
   test_a_torn_last_line_is_skipped_reported_and_never_rewritten \
   test_the_log_lives_in_gitignored_data \
   test_an_invalid_recap_publishes_nothing \
-  test_the_display_window_keeps_the_last_30_iterations_full_and_older_ones_to_a_line \
+  test_the_display_window_keeps_the_last_30_iterations_and_every_revision_full \
   test_a_publish_never_asks_lavish_to_open_a_browser_tab \
   test_a_live_session_listed_with_unread_prompts_is_not_reopened \
   test_a_live_update_keeps_the_readers_place_and_badges_the_new_iteration \
