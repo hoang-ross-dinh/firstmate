@@ -16,10 +16,14 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-batch)
 export FM_BACKEND=tmux
 
+BATCH_HOME="$TMP_ROOT/batch-home"
+mkdir -p "$BATCH_HOME"
+
 # Clear ambient firstmate overrides so the behavior test owns its environment.
+# An empty FM_HOME would fall back to the code root and read its private config/.
 run_spawn() {
   FM_ROOT_OVERRIDE='' \
-    FM_HOME='' \
+    FM_HOME="$BATCH_HOME" \
     FM_STATE_OVERRIDE='' \
     FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' \
