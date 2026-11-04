@@ -37,7 +37,7 @@
 #     "tasks": { "<task-key>": { "summary": "...", "emoji": "...",
 #                                "theme": "LW", "reply_terms": ["merge"],
 #                                "close": "release",
-#                                "links": [{ "kind": "ticket", "code": "COD-1",
+#                                "links": [{ "kind": "ticket", "code": "ABC-1",
 #                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
 # secondmate home. Every field is optional. A task without an entry, or an entry
