@@ -115,6 +115,23 @@ test_linked_secondmate_primary_nudges() {
   pass "fm-sessionstart-nudge: a marked linked secondmate home is a primary"
 }
 
+# A reused worktree can keep a retired secondmate's marker while a worker in it
+# inherits another home's FM_HOME or FM_STATE_OVERRIDE; that is not its home.
+test_marked_worktree_with_foreign_home_is_silent() {
+  local base="$TMP_ROOT/stale-marker-base" root="$TMP_ROOT/stale-marker-slot"
+  local home="$TMP_ROOT/stale-marker-home"
+  fm_git_worktree "$base" "$root" fm/sessionstart-stale-marker
+  mkdir -p "$root/bin" "$root/state"
+  : > "$root/AGENTS.md"
+  printf 'retired-mate\n' > "$root/.fm-secondmate-home"
+  make_primary "$home"
+  expect_silent_zero "stale marker with inherited FM_HOME nudge" env FM_GATE_REFUSE_BYPASS=0 \
+    FM_ROOT_OVERRIDE="$root" FM_HOME="$home" "$NUDGE"
+  expect_silent_zero "stale marker with inherited FM_STATE_OVERRIDE nudge" env FM_GATE_REFUSE_BYPASS=0 \
+    FM_ROOT_OVERRIDE="$root" FM_HOME="$root" FM_STATE_OVERRIDE="$home/state" "$NUDGE"
+  pass "fm-sessionstart-nudge: a marked linked worktree is not a primary for another home's state"
+}
+
 test_missing_state_is_silent() {
   local root="$TMP_ROOT/missing-state"
   make_primary "$root"
@@ -1099,6 +1116,7 @@ test_gate_env_is_silent
 test_gate_common_dir_is_silent
 test_unmarked_linked_worktree_is_silent
 test_linked_secondmate_primary_nudges
+test_marked_worktree_with_foreign_home_is_silent
 test_missing_state_is_silent
 test_owned_lock_is_silent
 test_namespace_pid1_lock_holder_is_silent

@@ -35,8 +35,19 @@ fm_primary_root_matches() {
 }
 
 # Return 0 when $1 is a genuine primary root whose effective state dir $2
-# already exists.
+# already exists. A linked worktree that qualifies only through its secondmate
+# marker must also be the home whose state this is: a secondmate always runs
+# with its own root as its home, while a reused worktree can keep a retired
+# secondmate's marker and run a worker whose inherited FM_HOME or
+# FM_STATE_OVERRIDE names another home.
 fm_primary_scope_matches() {
-  local root=$1 state=$2
-  fm_primary_root_matches "$root" && [ -d "$state" ]
+  local root=$1 state=$2 git_dir git_common_dir root_c state_c
+  fm_primary_root_matches "$root" || return 1
+  [ -d "$state" ] || return 1
+  git_dir=$(git -C "$root" rev-parse --git-dir 2>/dev/null) || return 1
+  git_common_dir=$(git -C "$root" rev-parse --git-common-dir 2>/dev/null) || return 1
+  [ "$git_dir" != "$git_common_dir" ] || return 0
+  root_c=$(cd "$root" 2>/dev/null && pwd -P) || return 1
+  state_c=$(cd "$state" 2>/dev/null && pwd -P) || return 1
+  [ "$state_c" = "$root_c/state" ]
 }

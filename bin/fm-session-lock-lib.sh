@@ -628,3 +628,37 @@ fm_session_lock_inspect() {  # <state>
   # shellcheck disable=SC2034 # Output global, read by lock status and inbox ready.
   FM_LOCK_INSPECT_LIVE_HARNESS=false
 }
+
+# Home-ownership guard for session-lock acquisition (bin/fm-lock.sh acquire).
+# A process may take only the lock of a home it owns. A home that is itself a
+# firstmate code root (it carries bin/fm-lock.sh) is owned only by the session
+# that runs that same code root: a primary checkout or a secondmate home always
+# runs its own bin/ with FM_HOME at its own root. A worker's pane can inherit
+# another home's FM_HOME or FM_STATE_OVERRIDE from the terminal server that
+# created it, and its own worktree can still carry a retired secondmate's
+# marker, so its hooks would otherwise lock that other home. A ship or scout
+# worker (FM_TASK_ID, exported by bin/fm-spawn.sh) owns no firstmate home at
+# all, including its own worktree. A home that is not a code root, such as an
+# empty temporary home in a test or a lab, is unaffected.
+# Both the home and the state directory's parent are checked, because either
+# variable can be inherited on its own.
+# Print the refusal reason and return 0 when acquisition must refuse; return 1
+# when it may proceed.
+fm_session_lock_home_refusal() {  # <code-root> <home> <state>
+  local root=$1 home=$2 state=$3 root_c target target_c
+  root_c=$(cd "$root" 2>/dev/null && pwd -P) || root_c=$root
+  for target in "$home" "$(dirname -- "$state")"; do
+    target_c=$(cd "$target" 2>/dev/null && pwd -P) || continue
+    [ -f "$target_c/bin/fm-lock.sh" ] || continue
+    if [ -n "${FM_TASK_ID:-}" ]; then
+      printf 'task worker %s must not take the session lock of firstmate home %s' \
+        "$FM_TASK_ID" "$target_c"
+      return 0
+    fi
+    [ "$target_c" = "$root_c" ] && continue
+    printf 'session lock target %s belongs to firstmate home %s, not to this code root %s (an inherited FM_HOME or FM_STATE_OVERRIDE?)' \
+      "$state" "$target_c" "$root_c"
+    return 0
+  done
+  return 1
+}

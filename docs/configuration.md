@@ -28,6 +28,7 @@ Start with the directory layout, then use the setting reference for the behavior
 
 When `FM_HOME` is unset, most scripts use the repo root as the home.
 When it is set, scripts still run from this repo's `bin/`, while `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
+A home that is itself a firstmate checkout takes its session lock only from its own code (`fm_session_lock_home_refusal` in `bin/fm-session-lock-lib.sh`).
 
 ### Root and directory overrides
 

@@ -1564,6 +1564,107 @@ test_reanchor_keeps_autoarm_midturn_healthy() {
   pass "session-lock: a re-anchor during a rewake turn keeps the mid-turn auto-arm proof healthy"
 }
 
+# --- home ownership: a lock is taken only in a home this process owns --------
+
+# A firstmate home whose code is committed, so a linked worktree of it carries
+# the same bin/, plus that worktree marked the way a retired secondmate's
+# reused slot still is. A worker pane inherits the home's FM_HOME or
+# FM_STATE_OVERRIDE from the terminal server that created it.
+make_foreign_home_and_slot() {  # <dir>
+  local dir=$1
+  make_primary_home "$dir/home"
+  cp "$ROOT/bin/fm-lease-lib.sh" "$dir/home/bin/fm-lease-lib.sh"
+  git -C "$dir/home" add AGENTS.md bin config
+  git -C "$dir/home" commit -q -m code
+  git -C "$dir/home" worktree add -q --detach "$dir/slot" HEAD
+  printf 'retired-mate\n' > "$dir/slot/.fm-secondmate-home"
+  mkdir -p "$dir/slot/state" "$dir/scratch"
+}
+
+# Acquire through <lock-script> as a Claude session; the caller passes the
+# environment under test as leading NAME=VALUE words. Prints the exit code.
+acquire_as_session() {  # <out-file> <lock-script> [NAME=VALUE...]
+  local out=$1 script=$2
+  shift 2
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u FM_HOME -u FM_STATE_OVERRIDE \
+    -u FM_ROOT_OVERRIDE -u FM_TASK_ID "$@" FM_LOCK="$script" FM_OUT="$out" \
+    "$NAMED_CLAUDE" -c '
+      CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_LOCK" > "$FM_OUT" 2>&1
+      printf "%s\n" "$?"
+    '
+}
+
+test_inherited_foreign_home_is_never_locked() {
+  local dir rc
+  dir="$TMP_ROOT/home-guard-inherited"
+  make_foreign_home_and_slot "$dir"
+  rc=$(acquire_as_session "$dir/home-env.out" "$dir/slot/bin/fm-lock.sh" FM_HOME="$dir/home")
+  expect_code 1 "$rc" "a worktree acquired another home's lock through an inherited FM_HOME: $(cat "$dir/home-env.out")"
+  grep -q 'belongs to firstmate home' "$dir/home-env.out" \
+    || fail "the refusal did not name the foreign home: $(cat "$dir/home-env.out")"
+  rc=$(acquire_as_session "$dir/state-env.out" "$dir/slot/bin/fm-lock.sh" FM_STATE_OVERRIDE="$dir/home/state")
+  expect_code 1 "$rc" "a worktree acquired another home's lock through an inherited FM_STATE_OVERRIDE: $(cat "$dir/state-env.out")"
+  [ ! -e "$dir/home/state/.lock" ] || fail "the foreign home's lock was written"
+  [ ! -e "$dir/home/state/.lock-session" ] || fail "the foreign home's lock sidecar was written"
+  pass "session-lock: an inherited FM_HOME or FM_STATE_OVERRIDE never locks another home"
+}
+
+test_task_worker_never_locks_a_firstmate_home() {
+  local dir rc
+  dir="$TMP_ROOT/home-guard-worker"
+  make_foreign_home_and_slot "$dir"
+  # An empty FM_HOME resolves to the worker's own marked worktree.
+  rc=$(acquire_as_session "$dir/empty.out" "$dir/slot/bin/fm-lock.sh" FM_HOME= FM_TASK_ID=demo-task)
+  expect_code 1 "$rc" "a task worker locked its own worktree as a home: $(cat "$dir/empty.out")"
+  grep -q 'task worker demo-task' "$dir/empty.out" \
+    || fail "the refusal did not name the task worker: $(cat "$dir/empty.out")"
+  [ ! -e "$dir/slot/state/.lock" ] || fail "the worker's worktree lock was written"
+  # An inherited root override makes the foreign home look like this code root.
+  rc=$(acquire_as_session "$dir/root.out" "$ROOT/bin/fm-lock.sh" FM_ROOT_OVERRIDE="$dir/home" FM_TASK_ID=demo-task)
+  expect_code 1 "$rc" "a task worker locked a home through an inherited FM_ROOT_OVERRIDE: $(cat "$dir/root.out")"
+  [ ! -e "$dir/home/state/.lock" ] || fail "the foreign home's lock was written"
+  # A temporary home that is not a firstmate code root still locks for a worker.
+  rc=$(acquire_as_session "$dir/scratch.out" "$dir/slot/bin/fm-lock.sh" FM_HOME="$dir/scratch" FM_TASK_ID=demo-task)
+  expect_code 0 "$rc" "a task worker could not lock a temporary home: $(cat "$dir/scratch.out")"
+  [ -s "$dir/scratch/state/.lock" ] || fail "the temporary home's lock was not written"
+  pass "session-lock: a task worker never locks a firstmate home but still locks a temporary one"
+}
+
+test_a_home_running_its_own_code_still_locks() {
+  local dir rc
+  dir="$TMP_ROOT/home-guard-own"
+  make_foreign_home_and_slot "$dir"
+  rc=$(acquire_as_session "$dir/home.out" "$dir/home/bin/fm-lock.sh" FM_HOME="$dir/home")
+  expect_code 0 "$rc" "a primary home could not lock itself: $(cat "$dir/home.out")"
+  rc=$(acquire_as_session "$dir/default.out" "$dir/slot/bin/fm-lock.sh")
+  expect_code 0 "$rc" "a marked secondmate home could not lock itself: $(cat "$dir/default.out")"
+  [ -s "$dir/home/state/.lock" ] && [ -s "$dir/slot/state/.lock" ] \
+    || fail "a home running its own code did not record its lock"
+  pass "session-lock: a primary or secondmate home running its own code still locks itself"
+}
+
+# The Stop hook's stale-lock recovery runs at every worker turn end: in a marked
+# slot with an inherited FM_HOME it reached fm-lock.sh for the other home while
+# that home's session was restarting.
+test_stop_hook_in_a_marked_slot_never_reclaims_a_foreign_lock() {
+  local dir dead rc
+  dir="$TMP_ROOT/home-guard-stop-hook"
+  make_foreign_home_and_slot "$dir"
+  dead=$(bash -c 'printf "%s" "$$"')
+  printf '%s\n' "$dead" > "$dir/home/state/.lock"
+  rc=$(env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE \
+    FM_HOME="$dir/home" FM_TASK_ID=demo-task FM_HOOK="$dir/slot/bin/fm-claude-stop-autoarm.sh" \
+    FM_OUT="$dir/hook.out" "$NAMED_CLAUDE" -c '
+      CLAUDE_CODE_SESSION_ID=S1 CLAUDE_PID=$$ "$FM_HOOK" </dev/null > "$FM_OUT" 2>&1
+      printf "%s\n" "$?"
+    ')
+  [ "$(tr -d '[:space:]' < "$dir/home/state/.lock")" = "$dead" ] \
+    || fail "the Stop hook in a worker slot reclaimed another home's lock (rc $rc): $(cat "$dir/hook.out")"
+  [ ! -e "$dir/home/state/.lock-session" ] || fail "the Stop hook wrote another home's lock sidecar"
+  [ ! -e "$dir/home/state/arm-ran" ] || fail "the Stop hook armed another home's supervision"
+  pass "session-lock: a Stop hook in a marked worker slot never reclaims another home's lock"
+}
+
 test_version_named_session_is_identified_on_both_platforms
 test_harness_at_namespace_pid1_is_examined
 test_ordinary_paths_are_never_harness_processes
@@ -1592,3 +1693,7 @@ test_failed_lock_write_removes_new_sidecar_when_none_existed
 test_verified_reclaim_keeps_new_sidecar
 test_reanchor_keeps_task_leases_live
 test_reanchor_keeps_autoarm_midturn_healthy
+test_inherited_foreign_home_is_never_locked
+test_task_worker_never_locks_a_firstmate_home
+test_a_home_running_its_own_code_still_locks
+test_stop_hook_in_a_marked_slot_never_reclaims_a_foreign_lock

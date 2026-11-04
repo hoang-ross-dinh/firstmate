@@ -49,16 +49,23 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 LOCK="$STATE/.lock"
 LOCK_SESSION="$STATE/.lock-session"
-mkdir -p "$STATE" 2>/dev/null || {
-  echo "error: cannot create session-lock state directory $STATE; operate read-only until resolved" >&2
-  exit 1
-}
 
 # Harness identity (FM_HARNESS_RE, ancestry walk, holder liveness, trusted
 # session id, anchor pid) is owned by the shared session-lock lib so the Claude
 # Stop auto-arm applies the exact same identity contract.
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+
+# Acquisition refuses a home this process does not own, before anything is
+# created or written there (fm_session_lock_home_refusal owns the rule).
+if [ "${1:-}" != "status" ] && refusal=$(fm_session_lock_home_refusal "$FM_ROOT" "$FM_HOME" "$STATE"); then
+  echo "error: $refusal; operate read-only until resolved" >&2
+  exit 1
+fi
+mkdir -p "$STATE" 2>/dev/null || {
+  echo "error: cannot create session-lock state directory $STATE; operate read-only until resolved" >&2
+  exit 1
+}
 
 if [ "${1:-}" = "status" ]; then
   fm_session_lock_inspect "$STATE"
