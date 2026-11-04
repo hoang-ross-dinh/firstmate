@@ -175,3 +175,16 @@ WHERE a task has no blockers, the board SHALL show no blocked badge.
 #### Scenario: Unblocked task
 - **WHEN** a task has no blockers
 - **THEN** its row and its detail show no blocked badge
+
+### Requirement: On Hold label
+WHERE a task's current revision has an on-hold text, the board SHALL show an "On Hold" badge and that text on the task row and in the task detail.
+WHERE a task has no on-hold text, the board SHALL show no On Hold badge.
+WHERE a task is both blocked and on hold, the board SHALL show both badges.
+
+#### Scenario: On-hold task
+- **WHEN** the first mate sets an on-hold text on a task
+- **THEN** its row and its detail show an "On Hold" badge with that text, and the badge differs in tone from the in-flight and blocked badges
+
+#### Scenario: Cleared or unmarked task
+- **WHEN** the on-hold text is empty or was never set
+- **THEN** its row and its detail show no On Hold badge

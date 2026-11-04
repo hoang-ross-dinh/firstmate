@@ -37,13 +37,20 @@
 #     "tasks": { "<task-key>": { "summary": "...", "emoji": "...",
 #                                "theme": "LW", "reply_terms": ["merge"],
 #                                "close": "release",
+#                                "on_hold": "waiting: first review feedback",
 #                                "links": [{ "kind": "ticket", "code": "ABC-1",
 #                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
 # secondmate home. Every field is optional. A task without an entry, or an entry
 # without a field, keeps the value from its last revision, and a new task falls
 # back to theme "misc" with an empty summary and emoji. close is "done" or
-# "release" and only matters for a task the captain answers. links is the list of
+# "release" and only matters for a task the captain answers. on_hold is a short
+# string naming the outside event a task waits for after the captain put it on
+# hold: a non-empty string marks the task and the board shows an "On Hold" badge
+# with that text on the row and in the detail, and an empty string clears the
+# mark. Only the first mate sets it, so the backlog does not carry it and an
+# omitted field keeps the last value. A longer string than 200 characters or any
+# non-string value is rejected whole, like any other bad field. links is the list of
 # tickets and merge requests the board shows as chips on the row and under
 # "Tickets & MRs" in the detail panel: kind is "ticket" or "mr", code and an
 # http(s) url are required, text is an optional short title. A publish with any
@@ -248,6 +255,7 @@ validate_recap() {  # <recap.json>
       and ((has("emoji") | not) or (.emoji | type == "string"))
       and ((has("theme") | not) or (.theme | type == "string" and test("^[A-Za-z0-9._-]{1,16}$")))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
+      and ((has("on_hold") | not) or (.on_hold | type == "string" and length <= 200))
       and ((has("reply_terms") | not) or (.reply_terms | type == "array"
         and ([.[] | type == "string" and length > 0 and length <= 64] | all)))
       and ((has("links") | not) or (.links | type == "array"
@@ -317,6 +325,9 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
           }
         # links are stored only when present, so a task without any keeps its
         # earlier revision unchanged.
+        # on_hold is stored only while set, so an unmarked task keeps its
+        # earlier revision unchanged and a cleared mark drops the field.
+        + (($mine.on_hold // $old.on_hold // "") as $h | if $h != "" then {on_hold: $h} else {} end)
         + (($mine.links // $old.links // []) as $l
             | ($l + derived($t.title // ""; [$l[].code])) as $l
             | if ($l | length) > 0 then {links: $l} else {} end)

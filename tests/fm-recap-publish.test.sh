@@ -771,6 +771,77 @@ test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge() {
   pass "a secondmate-home task with blockers shows the blocked badge, queued or held"
 }
 
+test_on_hold_is_stored_kept_cleared_and_a_bad_value_publishes_nothing() {
+  local home out bad
+  home=$(make_home on-hold-publish)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B")]"
+  write_recap "$home" '{"a":{"on_hold":"waiting: first review feedback"}}'
+  publish "$home" >/dev/null || fail "a publish with on_hold failed"
+  out=$(tail -1 "$(log_of "$home")")
+  printf '%s' "$out" | jq -e '.revisions.a.on_hold == "waiting: first review feedback" and (.revisions.b | has("on_hold") | not)' >/dev/null     || fail "on_hold was not stored on the marked task alone: $out"
+  write_recap "$home" '{"a":{"summary":"later"}}'
+  publish "$home" >/dev/null || fail "a publish without on_hold failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a.on_hold == "waiting: first review feedback"' >/dev/null     || fail "an omitted on_hold did not keep its last value"
+  write_recap "$home" '{"a":{"on_hold":""}}'
+  publish "$home" >/dev/null || fail "a publish clearing on_hold failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a | has("on_hold") | not' >/dev/null     || fail "an empty on_hold did not clear the mark"
+  for bad in '{"a":{"on_hold":true}}' '{"a":{"on_hold":3}}' '{"a":{"on_hold":["x"]}}' \
+    "{\"a\":{\"on_hold\":\"$(printf 'x%.0s' $(seq 1 201))\"}}"; do
+    printf '{"schema":"fm-recap.v1","tasks":%s}' "$bad" > "$home/recap.json"
+    publish "$home" >/dev/null 2>&1 && fail "a bad on_hold published: $bad"
+  done
+  [ "$(wc -l < "$(log_of "$home")" | tr -d ' ')" = 3 ] || fail "a bad on_hold wrote the log"
+  pass "on_hold is stored, kept when omitted, cleared by an empty string, and a bad value publishes nothing"
+}
+
+test_an_on_hold_task_shows_an_on_hold_badge_and_its_event_and_an_unmarked_task_shows_none() {
+  local home board out
+  home=$(make_home on-hold-badge)
+  entry 1 '["a","b"]' "{
+    \"a\": $(rev a queued "Task A" '{"on_hold":"waiting: first review feedback"}'),
+    \"b\": $(rev b queued "Task B")}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "On Hold")) | length == 1' >/dev/null     || fail "exactly the marked task did not get one On Hold badge: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge--hold")) | .text] == ["On Hold"]' >/dev/null     || fail "the On Hold badge shares a tone with another badge"
+  printf '%s' "$out" | all_text | grep -qx 'waiting: first review feedback' || fail "the row did not show the event text"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "On Hold")) | length == 2' >/dev/null     || fail "the detail panel did not show the On Hold badge"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row__sub")) | .text] | map(select(. == "waiting: first review feedback")) | length == 2' >/dev/null     || fail "the detail panel did not show the event text"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | map(select(. == "On Hold")) | length == 1' >/dev/null     || fail "an unmarked task detail showed an On Hold badge beyond task A's row"
+  pass "an on-hold task shows an On Hold badge and its event on the row and the detail, and an unmarked task shows none"
+}
+
+test_a_task_both_blocked_and_on_hold_shows_both_badges() {
+  local home board out
+  home=$(make_home on-hold-blocked)
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A" '{"on_hold":"waiting: review","blockers":"dep-1"}')}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text] | (index("On Hold") != null) and (index("blocked") != null)' >/dev/null     || fail "a blocked and on-hold task did not show both badges: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | all_text | grep -q 'blocked by dep-1' || fail "the blocker ids vanished beside the On Hold badge"
+  pass "a task both blocked and on hold shows both badges"
+}
+
+test_the_on_hold_text_is_escaped_and_a_history_change_reads_as_text() {
+  local home board out
+  home=$(make_home on-hold-history)
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A")}" > "$(log_of "$home")"
+  entry 2 '["a"]' "{\"a\": $(rev a queued "Task A" '{"on_hold":"<img src=x onerror=alert(1)> waiting"}')}" >> "$(log_of "$home")"
+  entry 3 '["a"]' "{\"a\": $(rev a queued "Task A" '{"on_hold":"waiting: second review"}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.tag == "img" or .tag == "script")] | length == 0)' >/dev/null     || fail "the on-hold text became markup or broke the page: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | any(test("on_hold: <img src=x onerror=alert\\(1\\)> waiting -> waiting: second review"))' >/dev/null \
+    || fail "the history did not show the on-hold change as text: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-change") | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | any(test("on_hold: \\(empty\\) -> "))' >/dev/null \
+    || fail "the history did not show the first marking as a readable change"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | map(select(test("[{}\\[\\]\"]"))) | length == 0' >/dev/null \
+    || fail "an on-hold history change shows raw JSON"
+  pass "the on-hold text is escaped and an on-hold history change reads as plain text"
+}
+
 test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box() {
   local home board out
   home=$(make_home main-card)
@@ -1368,6 +1439,10 @@ fm_test_run \
   test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box \
   test_a_blocked_task_shows_a_blocked_badge_and_its_blockers_and_an_unblocked_task_shows_none \
   test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge \
+  test_on_hold_is_stored_kept_cleared_and_a_bad_value_publishes_nothing \
+  test_an_on_hold_task_shows_an_on_hold_badge_and_its_event_and_an_unmarked_task_shows_none \
+  test_a_task_both_blocked_and_on_hold_shows_both_badges \
+  test_the_on_hold_text_is_escaped_and_a_history_change_reads_as_text \
   test_merge_and_dispatch_buttons_reuse_the_existing_routes \
   test_a_comment_queues_with_the_question_markup_and_shows_its_reply \
   test_a_comment_reply_renders_under_its_comment \

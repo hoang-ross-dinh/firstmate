@@ -75,6 +75,7 @@ a { color: inherit; text-decoration: none; }
 .fm-badge--danger  { background: var(--rust-600); color: var(--paper-000); }
 .fm-badge--info    { background: var(--ocean-500); color: var(--paper-000); }
 .fm-badge--neutral { background: var(--paper-000); color: var(--ink-900); }
+.fm-badge--hold    { background: var(--navy-700); color: var(--gold-300); }
 .fm-badge--solid   { background: var(--rust-500); color: var(--paper-000); }
 
 /* ---- fm-btn ---- */
@@ -260,7 +261,7 @@ a { color: inherit; text-decoration: none; }
   var COMMENT_LIMIT = 2000;
   var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
     "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
-    "hold_until", "close", "links"];
+    "hold_until", "close", "on_hold", "links"];
 
   var st = { iter: data.iteration, filter: "open", task: null, arrived: false };
   var FILTERS = [["open", "Open"], ["changed", "Changed in this iteration"],
@@ -592,10 +593,12 @@ a { color: inherit; text-decoration: none; }
     main.appendChild(el("div", "rb-row__title", r.rev.title));
     if (r.rev.summary) main.appendChild(el("div", "rb-row__sub", r.rev.summary));
     if (r.rev.blockers) main.appendChild(el("div", "rb-row__sub", "blocked by " + r.rev.blockers));
+    if (r.rev.on_hold) main.appendChild(el("div", "rb-row__sub", r.rev.on_hold));
     main.appendChild(el("div", "rb-row__mark", mark(r.rev, st.iter) + " - " + r.rev.home + (r.rev.repo ? " - " + r.rev.repo : "")));
     row.appendChild(main);
     var badges = el("div", "rb-row__badges");
     if (r.rev.waiting) badges.appendChild(badge("warn", "waiting on you"));
+    if (r.rev.on_hold) badges.appendChild(badge("hold", "On Hold"));
     if (r.rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge(r.rev.state === "done" ? "neutral" : r.rev.state === "in_flight" ? "online" : "info", r.rev.state));
     if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
@@ -815,12 +818,14 @@ a { color: inherit; text-decoration: none; }
     var top = el("section", "fm-card rb-panel");
     var badges = el("div", "rb-row__badges");
     badges.appendChild(badge("info", rev.state));
+    if (rev.on_hold) badges.appendChild(badge("hold", "On Hold"));
     if (rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge("neutral", rev.home));
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
     if (rev.theme) badges.appendChild(badge("solid", rev.theme));
     top.appendChild(badges);
     if (rev.summary) top.appendChild(el("div", "", rev.summary));
+    if (rev.on_hold) top.appendChild(el("div", "rb-row__sub", rev.on_hold));
     if (rev.blockers) top.appendChild(el("div", "rb-row__sub", "blocked by " + rev.blockers));
     var links = el("div", "rb-links");
     if (rev.pr_url) links.appendChild(link(rev.pr_url, rev.pr_url));

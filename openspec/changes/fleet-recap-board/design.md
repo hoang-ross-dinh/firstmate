@@ -149,6 +149,13 @@ The rule that the board reads backlogs only through tasks-axi verbs still applie
 - **Rejected recommendation:** None recorded.
 - **Reason:** The small "blocked by" line was easy to miss. A badge in the row's badge group gives the captain the same scan cue as the state and waiting badges. The change records no dependency and edits no backlog.
 
+### D20. On Hold label
+- **Decision:** How does the board show a task the captain put on hold while it waits for an outside event?
+- **Captain's ask:** An "On Hold" label for tasks held while they wait for an external event, such as the first review feedback from an outside reviewer, distinct from in-flight tasks.
+- **Choice:** The first mate sets an optional `on_hold` text on a task in the recap input. A non-empty text marks the task, and an empty text clears it. The board shows an "On Hold" badge with its own tone on the row and in the detail, with the text beside it, next to the blocked badge when both apply. Rows keep their theme group and order, so the badge is the only placement change. The history shows a changed `on_hold` as the old and new text.
+- **Rejected recommendation:** None recorded.
+- **Reason:** The backlog has no field for waiting on an outside party, and blocked is derived from the backlog while this is the first mate's own knowledge, so it belongs beside the other first mate fields. A string carries the event in the same field that marks the task.
+
 ## Implementation approach
 
 These choices serve the decisions above and are the implementer's, not the captain's.
