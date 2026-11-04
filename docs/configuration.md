@@ -2284,6 +2284,17 @@ Its first line is an `https://` URL prefix, for example `https://jira.example.te
 When the file is absent, unreadable, a symlink, or its first line is not an `https://` URL without whitespace, the board shows the key as plain text with no link.
 The file is local to each home and not part of secondmate inherited configuration.
 
+## Fleet Recap ticket chips (config/recap-ticket-url)
+
+`config/recap-ticket-url` is an optional local, gitignored file that gives a Fleet Recap card a ticket chip when its title holds a ticket key.
+Line 1 is an `http://` or `https://` URL template holding `{key}`, for example `https://tracker.example.invalid/browse/{key}`.
+An optional line 2 is the key regular expression, default `[A-Z][A-Z0-9]+-[0-9]+`.
+[`bin/fm-recap-publish.sh`](../bin/fm-recap-publish.sh) adds one `ticket` chip for each distinct key in a task title when no link of that task already has that key as its `code`.
+Explicit `links` from the recap data stay first, and derived chips follow them.
+When the file is absent, unreadable, or a symlink, nothing is derived.
+When line 1 is not an http(s) URL holding `{key}` without whitespace, or line 2 is not a valid regular expression, the publish warns once on stderr, derives nothing, and still succeeds.
+The file is local to each home and not part of secondmate inherited configuration.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.

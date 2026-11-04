@@ -64,6 +64,13 @@
 # such as https://jira.example.test/browse/ that the board puts before a Jira key
 # to make a link. Without it a key shows as plain text.
 #
+# config/recap-ticket-url (optional, local, gitignored) derives ticket chips from
+# a task title. Line 1 is an http(s) URL template holding {key}, an optional line
+# 2 is the key regex (default [A-Z][A-Z0-9]+-[0-9]+). Compose appends one ticket
+# chip per distinct key in the title whose code is not already in the task's
+# links, after the explicit links. An invalid file disables derivation with one
+# warning on stderr and the publish still succeeds.
+#
 # THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations are navigable,
 # and every task carries all of its revisions in full, so the board renders each
 # one as the same card. The log keeps everything.
@@ -251,10 +258,46 @@ validate_recap() {  # <recap.json>
           and ((has("text") | not) or (.text | type == "string"))] | all)))] | all)' "$1" >/dev/null
 }
 
+# The ticket-chip derivation setting from config/recap-ticket-url, as the globals
+# TICKET_TPL and TICKET_RE. Both stay empty when the file is absent, unreadable,
+# or a symlink. An invalid template or regex warns once and leaves both empty.
+TICKET_TPL=''
+TICKET_RE=''
+load_ticket_derivation() {
+  local f="$CONFIG/recap-ticket-url" tpl='' re=''
+  [ -f "$f" ] && [ ! -L "$f" ] || return 0
+  { IFS= read -r tpl || true; IFS= read -r re || true; } < "$f" 2>/dev/null || return 0
+  tpl=${tpl%$'\r'}; re=${re%$'\r'}
+  [ -n "$re" ] || re='[A-Z][A-Z0-9]+-[0-9]+'
+  case "$tpl" in
+    http://*'{key}'*|https://*'{key}'*) ;;
+    *) printf 'fm-recap-publish: %s: line 1 must be an http(s) URL holding {key}; ticket chips are not derived\n' "$f" >&2; return 0 ;;
+  esac
+  case "$tpl" in
+    *[[:space:]]*) printf 'fm-recap-publish: %s: the URL template holds whitespace; ticket chips are not derived\n' "$f" >&2; return 0 ;;
+  esac
+  if ! jq -n --arg re "$re" '"" | test($re)' >/dev/null 2>&1; then
+    printf 'fm-recap-publish: %s: line 2 is not a valid regex; ticket chips are not derived\n' "$f" >&2
+    return 0
+  fi
+  TICKET_TPL=$tpl
+  TICKET_RE=$re
+}
+
 # The new iteration entry from the prior entries, the collection, and the recap.
 compose_entry() {  # <entries.json> <collected.json> <recap.json>
   jq -c -n --arg schema "$ITERATION_SCHEMA" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg tpl "$TICKET_TPL" --arg re "$TICKET_RE" \
     --slurpfile entries "$1" --slurpfile collected "$2" --slurpfile recap "$3" '
+    # Ticket chips for the distinct keys in a title, after the explicit links.
+    # A derived url that is not http(s) without whitespace is dropped.
+    def derived($title; $have):
+      if $tpl == "" then []
+      else (reduce ($title | match($re; "g") | .string) as $k ([]; if index($k) then . else . + [$k] end)) as $keys
+        | [$keys[] | . as $k | select($have | index($k) | not)
+            | {kind: "ticket", code: $k, url: ($tpl | split("{key}") | join($k))}
+            | select(($k | length) > 0 and ($k | length) <= 64 and (.url | test("^https?://[^\\s]+$")))]
+      end;
     ($entries[0]) as $entries
     | ($collected[0]) as $c
     | ($recap[0].tasks) as $fm
@@ -274,7 +317,9 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
           }
         # links are stored only when present, so a task without any keeps its
         # earlier revision unchanged.
-        + (($mine.links // $old.links // []) as $l | if ($l | length) > 0 then {links: $l} else {} end)
+        + (($mine.links // $old.links // []) as $l
+            | ($l + derived($t.title // ""; [$l[].code])) as $l
+            | if ($l | length) > 0 then {links: $l} else {} end)
         | {key: $t.key, value: .}
         | select(.value != $old)] as $changed
     | {
@@ -391,6 +436,7 @@ command_publish() {
   mkdir -p "$DATA"
   work=$(mktemp -d "${TMPDIR:-/tmp}/fm-recap-publish.XXXXXX") || fail "cannot stage the publish"
   entries="$work/entries.json"; collected="$work/collected.json"
+  load_ticket_derivation
   read_log > "$entries" || { rm -rf -- "$work"; fail "cannot read the iteration log"; }
   collect > "$collected" || { rm -rf -- "$work"; fail "cannot collect the backlogs"; }
   entry=$(compose_entry "$entries" "$collected" "$recap") \

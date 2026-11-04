@@ -1105,6 +1105,124 @@ JSON
   pass "a bad link entry refuses the publish and writes nothing"
 }
 
+# --- derived ticket chips -----------------------------------------------------
+
+TICKET_URL_TEMPLATE='https://tracker.example.invalid/browse/{key}'
+
+ticket_home() {  # <name> <config-line-1> [config-line-2]
+  local home
+  home=$(make_home "$1")
+  mkdir -p "$home/config"
+  if [ -n "${2-}" ]; then
+    printf '%s\n' "$2" > "$home/config/recap-ticket-url"
+    [ -z "${3-}" ] || printf '%s\n' "$3" >> "$home/config/recap-ticket-url"
+  fi
+  printf '%s\n' "$home"
+}
+
+last_links() {  # <home> <task-key>
+  tail -1 "$(log_of "$1")" | jq -c --arg k "$2" '.revisions[$k].links // null'
+}
+
+test_no_ticket_url_config_derives_no_chips() {
+  local home
+  home=$(ticket_home ticket-none)
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  [ "$(last_links "$home" a)" = null ] || fail "a chip appeared without the config: $(last_links "$home" a)"
+  pass "without config/recap-ticket-url a title key derives no chip"
+}
+
+test_a_title_key_with_no_links_gets_a_derived_chip() {
+  local home
+  home=$(ticket_home ticket-derive "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A"), $(collected b queued "No key here")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  [ "$(last_links "$home" a)" = '[{"kind":"ticket","code":"EXAMPLE-12","url":"https://tracker.example.invalid/browse/EXAMPLE-12"}]' ] \
+    || fail "the derived chip is wrong: $(last_links "$home" a)"
+  [ "$(last_links "$home" b)" = null ] || fail "a title without a key got a chip: $(last_links "$home" b)"
+  pass "a title key with no links gets a derived ticket chip"
+}
+
+test_an_explicit_link_with_the_same_code_is_not_duplicated_and_stays_first() {
+  local home
+  home=$(ticket_home ticket-same "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+  write_recap "$home" '{"a":{"links":[{"kind":"ticket","code":"EXAMPLE-12","url":"https://explicit.example.invalid/x","text":"Explicit"}]}}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  [ "$(last_links "$home" a)" = '[{"kind":"ticket","code":"EXAMPLE-12","url":"https://explicit.example.invalid/x","text":"Explicit"}]' ] \
+    || fail "the explicit link was duplicated or replaced: $(last_links "$home" a)"
+  pass "an explicit link with the same code is not duplicated and stays first"
+}
+
+test_a_different_explicit_link_stays_first_and_the_derived_chip_follows() {
+  local home
+  home=$(ticket_home ticket-order "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+  write_recap "$home" '{"a":{"links":[{"kind":"mr","code":"!7001","url":"https://example.invalid/mr/7001"}]}}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  last_links "$home" a | jq -e 'map(.code) == ["!7001", "EXAMPLE-12"] and .[1].kind == "ticket"' >/dev/null \
+    || fail "the order is wrong: $(last_links "$home" a)"
+  pass "a different explicit link keeps first position and the derived chip follows"
+}
+
+test_two_distinct_title_keys_derive_two_chips_in_title_order() {
+  local home
+  home=$(ticket_home ticket-two "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 and OTHER-7 then EXAMPLE-12 again")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  last_links "$home" a | jq -e 'map(.code) == ["EXAMPLE-12", "OTHER-7"] and .[1].url == "https://tracker.example.invalid/browse/OTHER-7"' >/dev/null \
+    || fail "two keys did not derive two ordered chips: $(last_links "$home" a)"
+  pass "two distinct title keys derive two chips in title order, each once"
+}
+
+test_a_custom_key_regex_on_line_two_is_used() {
+  local home
+  home=$(ticket_home ticket-regex "$TICKET_URL_TEMPLATE" 'ZZ-[0-9]+')
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 and ZZ-3")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the publish failed"
+  last_links "$home" a | jq -e 'map(.code) == ["ZZ-3"]' >/dev/null || fail "the custom regex was ignored: $(last_links "$home" a)"
+  pass "a regex on line 2 replaces the default key pattern"
+}
+
+test_a_bad_template_or_regex_warns_once_and_the_publish_succeeds() {
+  local home err cfg n=0
+  for cfg in 'https://tracker.example.invalid/browse/' 'ftp://tracker.example.invalid/{key}' 'https://tracker.example.invalid/a b/{key}'; do
+    n=$((n + 1))
+    home=$(ticket_home "ticket-bad-tpl-$n" "$cfg")
+    write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+    write_recap "$home" '{}'
+    err=$(publish "$home" 2>&1 >/dev/null) || fail "a bad template failed the publish: $cfg"
+    [ "$(printf '%s\n' "$err" | grep -c 'ticket chips are not derived')" = 1 ] || fail "expected one warning for $cfg, got: $err"
+    [ "$(last_links "$home" a)" = null ] || fail "a bad template still derived a chip: $cfg"
+  done
+  home=$(ticket_home ticket-bad-re "$TICKET_URL_TEMPLATE" '[unclosed')
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+  write_recap "$home" '{}'
+  err=$(publish "$home" 2>&1 >/dev/null) || fail "a bad regex failed the publish"
+  [ "$(printf '%s\n' "$err" | grep -c 'ticket chips are not derived')" = 1 ] || fail "expected one warning for the bad regex, got: $err"
+  [ "$(last_links "$home" a)" = null ] || fail "a bad regex still derived a chip"
+  pass "a bad template or regex warns once, derives nothing, and the publish succeeds"
+}
+
+test_republishing_with_derived_chips_makes_no_new_revision() {
+  local home
+  home=$(ticket_home ticket-idem "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A")]"
+  write_recap "$home" '{"a":{"links":[{"kind":"mr","code":"!7001","url":"https://example.invalid/mr/7001"}]}}'
+  publish "$home" >/dev/null || fail "the first publish failed"
+  publish "$home" >/dev/null || fail "the second publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "a republish made a revision: $(tail -1 "$(log_of "$home")")"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the third publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "a recap without links made a revision: $(tail -1 "$(log_of "$home")")"
+  pass "a republish with derived chips makes no new revision"
+}
+
 link_anchors() { jq -c '[.nodes[] | select(.tag == "a" and ((.attrs.href // "") | startswith("https://example.invalid/")))]'; }
 
 test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
@@ -1261,6 +1379,14 @@ fm_test_run \
   test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note \
   test_publish_accepts_links_and_stores_them_only_when_present_or_changed \
   test_publish_refuses_a_bad_link_entry_and_writes_nothing \
+  test_no_ticket_url_config_derives_no_chips \
+  test_a_title_key_with_no_links_gets_a_derived_chip \
+  test_an_explicit_link_with_the_same_code_is_not_duplicated_and_stays_first \
+  test_a_different_explicit_link_stays_first_and_the_derived_chip_follows \
+  test_two_distinct_title_keys_derive_two_chips_in_title_order \
+  test_a_custom_key_regex_on_line_two_is_used \
+  test_a_bad_template_or_regex_warns_once_and_the_publish_succeeds \
+  test_republishing_with_derived_chips_makes_no_new_revision \
   test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section \
   test_a_task_with_only_one_link_kind_shows_only_that_group \
   test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \
