@@ -755,6 +755,26 @@ test_a_blocked_task_shows_a_blocked_badge_and_its_blockers_and_an_unblocked_task
   pass "a blocked task shows a blocked badge and its blocker ids in the row and the detail, and an unblocked task shows none"
 }
 
+test_the_detail_state_badge_matches_the_row_tone_and_the_theme_code_reads_as_a_recap_label() {
+  local home board out
+  home=$(make_home state-tone)
+  {
+    entry 1 '["a"]' "{
+      \"a\": $(rev a in_flight "Task A")}"
+  } > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge--online")) | .text] == ["in_flight", "in_flight"]' >/dev/null \
+    || fail "the row and the detail did not both show in_flight in the online tone"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge--info")) | .text] | index("in_flight") == null' >/dev/null \
+    || fail "the detail showed in_flight in the info tone"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge--solid"))] | length == 0' >/dev/null \
+    || fail "a solid theme-code badge remained"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge--neutral")) | .text] | index("Recap T1") != null' >/dev/null \
+    || fail "the detail did not label the theme code as Recap T1"
+  pass "the detail state badge matches the row tone and the theme code reads as a neutral Recap label"
+}
+
 test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge() {
   local home board out
   home=$(make_home blocked-mate)
@@ -1438,6 +1458,7 @@ fm_test_run \
   test_a_secondmate_card_offers_answer_buttons_and_names_who_acts \
   test_a_main_home_card_still_offers_its_reply_terms_and_the_comment_box \
   test_a_blocked_task_shows_a_blocked_badge_and_its_blockers_and_an_unblocked_task_shows_none \
+  test_the_detail_state_badge_matches_the_row_tone_and_the_theme_code_reads_as_a_recap_label \
   test_a_secondmate_home_task_with_blockers_shows_the_blocked_badge \
   test_on_hold_is_stored_kept_cleared_and_a_bad_value_publishes_nothing \
   test_an_on_hold_task_shows_an_on_hold_badge_and_its_event_and_an_unmarked_task_shows_none \

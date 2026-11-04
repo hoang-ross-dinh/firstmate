@@ -274,6 +274,7 @@ a { color: inherit; text-decoration: none; }
     return n;
   }
   function badge(tone, text) { return el("span", "fm-badge fm-badge--" + tone, text); }
+  function stateTone(state) { return state === "done" ? "neutral" : state === "in_flight" ? "online" : "info"; }
   function clear(n) { n.textContent = ""; return n; }
   function link(href, text) {
     var a = el("a", "", text);
@@ -600,7 +601,7 @@ a { color: inherit; text-decoration: none; }
     if (r.rev.waiting) badges.appendChild(badge("warn", "waiting on you"));
     if (r.rev.on_hold) badges.appendChild(badge("hold", "On Hold"));
     if (r.rev.blockers) badges.appendChild(badge("danger", "blocked"));
-    badges.appendChild(badge(r.rev.state === "done" ? "neutral" : r.rev.state === "in_flight" ? "online" : "info", r.rev.state));
+    badges.appendChild(badge(stateTone(r.rev.state), r.rev.state));
     if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
     row.appendChild(badges);
     row.addEventListener("click", function () { openRow = row; openTask(r.task.key); });
@@ -817,12 +818,12 @@ a { color: inherit; text-decoration: none; }
     var box = el("div", "rb-detail");
     var top = el("section", "fm-card rb-panel");
     var badges = el("div", "rb-row__badges");
-    badges.appendChild(badge("info", rev.state));
+    badges.appendChild(badge(stateTone(rev.state), rev.state));
     if (rev.on_hold) badges.appendChild(badge("hold", "On Hold"));
     if (rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge("neutral", rev.home));
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
-    if (rev.theme) badges.appendChild(badge("solid", rev.theme));
+    if (rev.theme) badges.appendChild(badge("neutral", "Recap " + rev.theme));
     top.appendChild(badges);
     if (rev.summary) top.appendChild(el("div", "", rev.summary));
     if (rev.on_hold) top.appendChild(el("div", "rb-row__sub", rev.on_hold));
