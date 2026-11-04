@@ -2600,7 +2600,9 @@ test_claude_crew_autocompact_window_reaches_workers_only() {
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 " "crewmate launch lacks the window variable"
   # The trailing doorbell names a per-spawn record path, so compare everything before the worker prompt.
-  [ "$(printf '%s' "${launch/CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 /}" | sed 's/ --append-system-prompt.*//')" = "$(printf '%s' "$baseline" | sed 's/ --append-system-prompt.*//')" ] \
+  # The Git config env file is named by a per-spawn generation stamp, so mask that stamp too.
+  local per_spawn='s/ --append-system-prompt.*//; s/git-config\.s[0-9]*\.[0-9]*\.[0-9]*\.sh/git-config.GEN.sh/g'
+  [ "$(printf '%s' "${launch/CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 /}" | sed "$per_spawn")" = "$(printf '%s' "$baseline" | sed "$per_spawn")" ] \
     || fail "the variable must be the only difference from the absent-file launch"
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" compact-window-scout-z31 "$PROJ_DIR" --scout 2>&1)
