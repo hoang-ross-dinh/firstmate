@@ -419,6 +419,8 @@ test_a_live_update_keeps_the_readers_place_and_badges_the_new_iteration() {
     || fail "the reload dropped the open task detail"
   [ "$(printf '%s' "$out" | jq '.scrolledTo')" = 240 ] || fail "the reload did not restore the scroll position"
   [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "no arrival badge after the update: $(printf '%s' "$out" | badges_of)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-arrived__dot")] | length == 1' >/dev/null \
+    || fail "the arrival badge has no red dot icon"
   # Reloading again with nothing new keeps the badge until the newest iteration is viewed.
   out=$(render "$board" "" "$storage")
   [ "$(printf '%s' "$out" | badges_of)" = '["Iteration 4 arrived"]' ] || fail "the badge vanished before the newest iteration was viewed"
