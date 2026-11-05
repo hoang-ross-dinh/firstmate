@@ -24,7 +24,16 @@
 //   { "poll":   { "fail": true } }                         run one poll tick whose data load fails
 // The page's first payload is the bearings-board.data.js next to the built board, as the
 // browser loads it through the board's script tag.
-// Prints one JSON document: { nodes, queued, scrollY, keys, error, focused }.
+// RECAP_HARNESS_ENV, when set, is a JSON object that models the browser around the page:
+//   { "secure": bool, "notification": "absent"|"default"|"granted"|"denied", "focused": bool,
+//     "visible": bool, "localStorage": { key: value } }
+// A "default" permission becomes "granted" when the page requests it. Absent keys mean a
+// secure, focused, visible tab with no Notification support and an empty localStorage.
+// Prints one JSON document: { nodes, queued, scrollY, keys, error, focused, notifications, permissionRequests, clicked, local }.
+//   notifications       every Notification the page created: {title, body, tag}
+//   permissionRequests  how many times the page asked for Notification permission
+//   clicked             { "notifclick": true } runs the last notification's onclick; true once window.focus ran
+//   local               the page's localStorage at the end
 //   keys    one {key, field, prevented, stopped} per key action; nodes carry scrollTop (the shim's clientHeight is 1000)
 //   scrollY page scroll position. The shim resets it to 0 whenever the list
 //           container is cleared, a conservative stand-in for a browser clamping
@@ -107,6 +116,12 @@ byId.get("rb-panel").hidden = true; // the template markup ships the panel close
 byId.get("rb-stale").hidden = true; // and the stale note hidden
 byId.get("rb-app").onClear = () => { window.scrollY = 0; };
 const keyListeners = [];
+const env = process.env.RECAP_HARNESS_ENV ? JSON.parse(process.env.RECAP_HARNESS_ENV) : {};
+const local = new Map(Object.entries(env.localStorage || {}));
+const notifications = [];
+let permissionRequests = 0;
+let windowFocused = false;
+let lastNotification = null;
 
 const queued = [];
 const storagePath = process.argv[4];
@@ -129,10 +144,15 @@ globalThis.document = {
   createElement: (tag) => new Node(tag),
   getElementById: (id) => byId.get(id) ?? new Node("div"),
   addEventListener: (type, fn) => { if (type === "keydown") keyListeners.push(fn); },
+  visibilityState: env.visible === false ? "hidden" : "visible",
+  hasFocus: () => env.focused !== false,
 };
 globalThis.window = {
   sessionStorage: storagePath ? sessionStorage : undefined,
   scrollY: 0,
+  isSecureContext: env.secure !== false,
+  localStorage: { getItem: (k) => (local.has(k) ? local.get(k) : null), setItem: (k, v) => { local.set(k, String(v)); } },
+  focus: () => { windowFocused = true; },
   __fmBoard: readPayload(join(dirname(process.argv[2]), "bearings-board.data.js")),
   addEventListener: (type, fn) => { if (type === "scroll") scrollListeners.push(fn); },
   scrollTo: (x, y) => { scrolledTo = y; window.scrollY = y; },
@@ -147,6 +167,19 @@ globalThis.window = {
       }),
   },
 };
+if (env.notification && env.notification !== "absent") {
+  window.Notification = function Notification(title, opts) {
+    notifications.push({ title, body: opts.body, tag: opts.tag });
+    this.close = () => {};
+    lastNotification = this;
+  };
+  window.Notification.permission = env.notification;
+  window.Notification.requestPermission = (cb) => {
+    permissionRequests += 1;
+    if (window.Notification.permission === "default") window.Notification.permission = "granted";
+    cb(window.Notification.permission);
+  };
+}
 globalThis.TextEncoder = TextEncoder;
 globalThis.setInterval = (fn) => { timers.push(fn); return timers.length; };
 
@@ -195,6 +228,9 @@ try {
     } else if (kind === "poll") {
       nextLoad = arg;
       timers.forEach((fn) => fn());
+    } else if (kind === "notifclick") {
+      if (!lastNotification || !lastNotification.onclick) throw new Error("no notification to click");
+      lastNotification.onclick();
     } else if (kind === "submit") {
       const n = nodes.find((x) => x.tagName === "form" && x.attributes["data-lavish-question"] === arg.question);
       if (!n) throw new Error("no form: " + JSON.stringify(arg));
@@ -216,4 +252,5 @@ const nodes = [byId.get("rb-page"), ...["rb-nav", "rb-app", "rb-panel", "rb-stal
 }));
 if (storagePath) writeFileSync(storagePath, JSON.stringify(Object.fromEntries(store)));
 process.stdout.write(JSON.stringify({ nodes, queued, scrollY: window.scrollY, scrolledTo, keys, error,
+  notifications, permissionRequests, clicked: windowFocused, local: Object.fromEntries(local),
   focused: document.activeElement ? { tag: document.activeElement.tagName, name: document.activeElement.name, attrs: document.activeElement.attributes } : null }) + "\n");

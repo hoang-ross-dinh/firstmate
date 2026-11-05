@@ -1147,6 +1147,108 @@ test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note() {
   pass "a failed poll keeps the last data with a stale note that clears on the next good poll"
 }
 
+# --- iteration notifications --------------------------------------------------
+
+# A board at iteration 3 on disk and the iteration-4 data file a later publish writes.
+# The second argument holds the iteration-4 revisions. Prints the board path.
+notify_fixture() {  # <home> <iteration-4 revisions-json>
+  local home=$1 board dir
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/poll-old.js"
+  entry 4 '["a","b","c"]' "$2" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/poll-new-${home##*/}.js"
+  cp "$TMP_ROOT/poll-old.js" "$dir/bearings-board.data.js"
+  printf '%s\n' "$board"
+}
+
+# Iteration 4: task a finishes (code LW) and task c starts waiting on the reader (code ES).
+news_revs() {
+  printf '{"a": %s, "c": %s}' \
+    "$(rev a done "Task A" '{"theme":"LW","summary":"A done"}')" \
+    "$(rev c in_flight "Task C" '{"theme":"ES","summary":"C asks","reply_terms":["go"]}')"
+}
+
+NOTIFY_ON='{"notification":"granted","focused":false,"localStorage":{"fm-board-notify":"on"}}'
+
+bell_of() { jq -c '[.nodes[] | select(.cls == "rb-bell")] | .[0] | {text, state: .attrs["data-bell"], disabled}'; }
+
+test_a_new_iteration_notifies_once_naming_the_waiting_and_done_codes() {
+  local home board out poll
+  home=$(make_home notify-news)
+  board=$(notify_fixture "$home" "$(news_revs)")
+  poll="{\"poll\":{\"file\":\"$TMP_ROOT/poll-new-${home##*/}.js\"}}"
+  out=$(RECAP_HARNESS_ENV=$NOTIFY_ON render "$board" "[$poll,$poll,{\"notifclick\":true}]")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the poll errored: $out"
+  printf '%s' "$out" | jq -e '.notifications | length == 1' >/dev/null || fail "not exactly one notification: $(printf '%s' "$out" | jq -c .notifications)"
+  [ "$(printf '%s' "$out" | jq -r '.notifications[0].body')" = "Waiting: ES · Done: LW" ] \
+    || fail "the notification text is wrong: $(printf '%s' "$out" | jq -c .notifications)"
+  [ "$(printf '%s' "$out" | jq '.clicked')" = true ] || fail "a click did not focus the board window"
+  [ "$(printf '%s' "$out" | jq '.permissionRequests')" = 0 ] || fail "the page asked for permission without a click"
+  pass "a new iteration sends one notification naming the waiting and done codes, and a click focuses the board"
+}
+
+test_no_notification_on_first_load_focus_or_progress_only_changes() {
+  local home board out new
+  home=$(make_home notify-quiet)
+  board=$(notify_fixture "$home" "$(news_revs)")
+  new="$TMP_ROOT/poll-new-${home##*/}.js"
+  out=$(RECAP_HARNESS_ENV=$NOTIFY_ON render "$board")
+  printf '%s' "$out" | jq -e '.notifications | length == 0' >/dev/null || fail "the first load notified"
+  out=$(RECAP_HARNESS_ENV=$NOTIFY_ON render "$board" "[{\"poll\":{\"file\":\"$TMP_ROOT/poll-old.js\"}}]")
+  printf '%s' "$out" | jq -e '.notifications | length == 0' >/dev/null || fail "unchanged data notified"
+  out=$(RECAP_HARNESS_ENV='{"notification":"granted","focused":true,"localStorage":{"fm-board-notify":"on"}}' \
+    render "$board" "[{\"poll\":{\"file\":\"$new\"}}]")
+  printf '%s' "$out" | jq -e '.notifications | length == 0' >/dev/null || fail "a focused tab was notified"
+  out=$(RECAP_HARNESS_ENV='{"notification":"granted","focused":false,"localStorage":{}}' \
+    render "$board" "[{\"poll\":{\"file\":\"$new\"}}]")
+  printf '%s' "$out" | jq -e '.notifications | length == 0' >/dev/null || fail "a bell left off still notified"
+  home=$(make_home notify-progress)
+  board=$(notify_fixture "$home" "{\"b\": $(rev b in_flight "Task B" '{"theme":"QD","summary":"B moved"}')}")
+  out=$(RECAP_HARNESS_ENV=$NOTIFY_ON render "$board" "[{\"poll\":{\"file\":\"$TMP_ROOT/poll-new-${home##*/}.js\"}}]")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the poll errored: $out"
+  printf '%s' "$out" | jq -e '.notifications | length == 0' >/dev/null || fail "an in-progress-only change notified"
+  pass "no notification on first load, unchanged data, a focused tab, a bell left off, or an in-progress-only change"
+}
+
+test_the_bell_asks_permission_only_on_click_and_remembers_the_toggle() {
+  local home board out
+  home=$(make_home notify-bell)
+  board=$(notify_fixture "$home" "$(news_revs)")
+  out=$(RECAP_HARNESS_ENV='{"notification":"default"}' render "$board")
+  [ "$(printf '%s' "$out" | jq '.permissionRequests')" = 0 ] || fail "the page asked for permission on load"
+  [ "$(printf '%s' "$out" | bell_of)" = '{"text":"Notifications off","state":"off","disabled":false}' ] || fail "the idle bell is wrong: $(printf '%s' "$out" | bell_of)"
+  out=$(RECAP_HARNESS_ENV='{"notification":"default"}' render "$board" '[{"click":{"attr":"data-bell","value":"off"}}]')
+  [ "$(printf '%s' "$out" | jq '.permissionRequests')" = 1 ] || fail "a bell click did not ask for permission once"
+  [ "$(printf '%s' "$out" | bell_of)" = '{"text":"Notifications on","state":"on","disabled":false}' ] || fail "the bell is not on after a grant: $(printf '%s' "$out" | bell_of)"
+  [ "$(printf '%s' "$out" | jq -r '.local["fm-board-notify"]')" = on ] || fail "the toggle was not remembered"
+  out=$(RECAP_HARNESS_ENV='{"notification":"granted","localStorage":{"fm-board-notify":"on"}}' render "$board" '[{"click":{"attr":"data-bell","value":"on"}}]')
+  [ "$(printf '%s' "$out" | jq -r '.local["fm-board-notify"]')" = off ] || fail "a second click did not turn the bell off"
+  pass "the bell asks for permission only when clicked, and remembers the toggle"
+}
+
+test_the_bell_degrades_when_notifications_cannot_work() {
+  local home board out
+  home=$(make_home notify-degrade)
+  board=$(notify_fixture "$home" "$(news_revs)")
+  out=$(RECAP_HARNESS_ENV='{"secure":false,"notification":"default"}' render "$board")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "an insecure page errored: $out"
+  [ "$(printf '%s' "$out" | bell_of)" = '{"text":"notifications need https or localhost","state":"insecure","disabled":true}' ] \
+    || fail "the insecure bell is wrong: $(printf '%s' "$out" | bell_of)"
+  [ "$(printf '%s' "$out" | jq '.permissionRequests')" = 0 ] || fail "an insecure page asked for permission"
+  out=$(RECAP_HARNESS_ENV='{"notification":"absent"}' render "$board")
+  [ "$(printf '%s' "$out" | bell_of | jq -r .state)" = unsupported ] || fail "no-Notification bell is wrong"
+  out=$(RECAP_HARNESS_ENV='{"notification":"denied"}' render "$board")
+  [ "$(printf '%s' "$out" | bell_of | jq -r .state)" = denied ] || fail "denied bell is wrong"
+  out=$(RECAP_HARNESS_ENV='{"secure":false,"notification":"absent","focused":false}' \
+    render "$board" "[{\"poll\":{\"file\":\"$TMP_ROOT/poll-new-${home##*/}.js\"}}]")
+  [ "$(printf '%s' "$out" | jq -r '.error')" = "" ] || fail "polling without Notification broke the page: $out"
+  [ "$(printf '%s' "$out" | label_of)" = "Iteration 3 of 4" ] || fail "polling without Notification did not load the data"
+  pass "the bell shows the https or localhost limit, unsupported and blocked states, and the page keeps working"
+}
+
 # --- ticket and MR links ----------------------------------------------------
 
 LINKS_FIXTURE='[{"kind":"ticket","code":"EXAMPLE-1","url":"https://example.invalid/browse/EXAMPLE-1","text":"Synthetic ticket title"},
@@ -1473,6 +1575,10 @@ fm_test_run \
   test_a_poll_redraws_in_place_keeping_scroll_panel_and_focus \
   test_a_poll_waits_while_a_field_has_focus_or_unsent_text \
   test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note \
+  test_a_new_iteration_notifies_once_naming_the_waiting_and_done_codes \
+  test_no_notification_on_first_load_focus_or_progress_only_changes \
+  test_the_bell_asks_permission_only_on_click_and_remembers_the_toggle \
+  test_the_bell_degrades_when_notifications_cannot_work \
   test_publish_accepts_links_and_stores_them_only_when_present_or_changed \
   test_publish_refuses_a_bad_link_entry_and_writes_nothing \
   test_no_ticket_url_config_derives_no_chips \
