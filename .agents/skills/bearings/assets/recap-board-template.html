@@ -130,9 +130,6 @@ a { color: inherit; text-decoration: none; }
 .rb-iter { display: inline-flex; align-items: center; gap: 10px; }
 .rb-iter__label { font-weight: 800; color: var(--text-strong); }
 .rb-arrived { font: inherit; font-size: var(--fs-xs); font-weight: 800; cursor: pointer; border: 1px solid var(--status-warn); border-radius: 999px; padding: 2px 10px; background: var(--status-warn-soft); color: var(--text-strong); }
-.rb-bell { font: inherit; font-size: var(--fs-xs); font-weight: 800; cursor: pointer; border: 1px solid var(--border-default); border-radius: 999px; padding: 2px 10px; background: transparent; color: var(--text-strong); }
-.rb-bell[aria-pressed="true"] { border-color: var(--status-warn); background: var(--status-warn-soft); }
-.rb-bell:disabled { cursor: default; color: var(--text-faint); }
 .rb-stale { max-width: var(--container-app); margin: 0 auto; padding: 0 28px 6px; font-size: var(--fs-xs); font-weight: 800; color: var(--status-warn); }
 .rb-iter__at { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-faint); }
 .rb-main {
@@ -544,7 +541,6 @@ a { color: inherit; text-decoration: none; }
       it.appendChild(fresh);
     }
     nav.appendChild(it);
-    nav.appendChild(bellNode());
   }
 
   function renderWarnings(parent) {
@@ -892,71 +888,6 @@ a { color: inherit; text-decoration: none; }
   }
   function render() { renderBoard(); renderPanel(); saveView(); }
 
-  /* ---- iteration notifications ---------------------------------------------- */
-  /* A bell toggle asks for browser Notification permission once, from a click, never on load.
-     The page notifies once for an iteration that adds or changes an item waiting on the reader
-     (reply_terms present) or finishes one, and stays quiet while the tab is focused. Notification
-     needs a secure context, so on plain http the bell only says so and asks for nothing. */
-  var NOTIFY_KEY = "fm-board-notify";
-  function lsGet() { try { return window.localStorage.getItem(NOTIFY_KEY); } catch (e) { return null; } }
-  function lsSet(v) { try { window.localStorage.setItem(NOTIFY_KEY, v); } catch (e) { /* the toggle just is not remembered */ } }
-  function notifyState() {
-    if (!window.isSecureContext) return "insecure";
-    if (typeof window.Notification !== "function") return "unsupported";
-    if (window.Notification.permission === "denied") return "denied";
-    if (window.Notification.permission === "granted" && lsGet() === "on") return "on";
-    return "off";
-  }
-  var BELL_TEXT = { insecure: "notifications need https or localhost", unsupported: "notifications unsupported here",
-    denied: "notifications blocked by the browser", on: "Notifications on", off: "Notifications off" };
-  function bellNode() {
-    var state = notifyState();
-    var b = el("button", "rb-bell", BELL_TEXT[state]);
-    b.type = "button"; b.setAttribute("data-bell", state);
-    b.setAttribute("aria-pressed", state === "on" ? "true" : "false");
-    if (state !== "on" && state !== "off") { b.disabled = true; return b; }
-    b.addEventListener("click", function () {
-      if (state === "on") { lsSet("off"); renderNav(); return; }
-      function enable(perm) { if (perm === "granted") lsSet("on"); renderNav(); }
-      if (window.Notification.permission === "granted") { enable("granted"); return; }
-      try {
-        var r = window.Notification.requestPermission(enable);
-        if (r && typeof r.then === "function") r.then(enable, function () { renderNav(); });
-      } catch (e) { renderNav(); }
-    });
-    return b;
-  }
-  function tabFocused() {
-    return document.visibilityState === "visible" && typeof document.hasFocus === "function" && document.hasFocus();
-  }
-  /* what newer data adds over the data already shown: tasks waiting on the reader, tasks newly done */
-  function iterationNews(older, newer) {
-    var waiting = [], done = [];
-    function add(list, code) { if (list.indexOf(code) === -1) list.push(code); }
-    newer.tasks.forEach(function (t) {
-      var rev = null, before = null, i;
-      for (i = 0; i < t.revisions.length; i++) if (t.revisions[i].iter <= newer.iteration) { rev = t.revisions[i]; break; }
-      if (!rev || rev.iter <= older.iteration) return;
-      for (i = 0; i < t.revisions.length; i++) if (t.revisions[i].iter <= older.iteration) { before = t.revisions[i]; break; }
-      var code = rev.theme || t.key;
-      if (rev.state === "done") { if (!before || before.state !== "done") add(done, code); }
-      else if (Array.isArray(rev.reply_terms) && rev.reply_terms.length) add(waiting, code);
-    });
-    return { waiting: waiting, done: done };
-  }
-  function notifyIteration(older, newer) {
-    if (older.iteration === 0 || newer.iteration <= older.iteration) return;
-    if (notifyState() !== "on" || tabFocused()) return;
-    var news = iterationNews(older, newer), parts = [];
-    if (news.waiting.length) parts.push("Waiting: " + news.waiting.join(", "));
-    if (news.done.length) parts.push("Done: " + news.done.join(", "));
-    if (!parts.length) return;
-    try {
-      var n = new window.Notification("Fleet Recap - iteration " + newer.iteration, { body: parts.join(" \u00B7 "), tag: "fm-board-iteration" });
-      n.onclick = function () { try { window.focus(); n.close(); } catch (e) { /* nothing to focus */ } };
-    } catch (e) { /* some browsers refuse the constructor; the bell stays as is */ }
-  }
-
   /* ---- live data -------------------------------------------------------- */
   /* Every POLL_MS the page reloads the sibling data file through a fresh script tag and
      redraws in place only when the payload changed. A redraw waits while the reader is in
@@ -989,7 +920,7 @@ a { color: inherit; text-decoration: none; }
   }
   function applyPending() {
     if (!pending || busy()) return;
-    var next = pending, was = data.iteration, first, older = data;
+    var next = pending, was = data.iteration, first;
     pending = null;
     var y = window.scrollY || 0;
     var top = panelBody && st.task ? panelBody.scrollTop : 0;
@@ -1008,7 +939,6 @@ a { color: inherit; text-decoration: none; }
       if (target && target.focus) target.focus({ preventScroll: true });
     }
     saveView();
-    notifyIteration(older, data);
   }
   function offer(p) {
     if (JSON.stringify(p) === dataSig) { pending = null; return; }
