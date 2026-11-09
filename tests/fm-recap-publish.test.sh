@@ -1425,6 +1425,9 @@ test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus() {
 ANSWER_NOTE='1700000000-abcdef'
 ANSWER_MD=$'## Findings\n\nThe **connector** is *stale*; see [the docs](https://example.invalid/docs) and `reset --now`.\n\n- first item\n- second item\n\n1. step one\n2. step two\n\n| col a | col b |\n| --- | --- |\n| 1 | two |\n\n```sh\necho "<b>x</b> && done"\n```'
 
+# jq: the rendered nodes from the h3 titled $t up to the next h3 titled $u (or the end), in document order.
+SEC_DEF='def sec($t; $u): (.nodes | (map(.tag == "h3" and .text == $t) | index(true)) as $i | if $i == null then [] else .[$i:] | ((map(.tag == "h3" and .text == $u) | index(true)) as $j | if $j then .[:$j] else . end) end);'
+
 answer_extra() {  # <to> <text>
   jq -c -n --arg to "$1" --arg text "$2" '{theme: "LW", summary: "A two", answer: {to: $to, text: $text}}'
 }
@@ -1500,22 +1503,22 @@ test_an_answer_renders_in_history_linked_to_its_comment_and_once_only() {
   board=$(refresh_board "$home")
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
   printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the board errored: $out"
-  printf '%s' "$out" | jq -e --arg id "$id" '
+  printf '%s' "$out" | jq -e --arg id "$id" "$SEC_DEF"'
     ([.nodes[] | select(.cls == "rb-answer")] | length) == 1
     and ([.nodes[] | select(.cls == "rb-answer__head") | .text] == ["First mate answer to comment " + $id])
-    and ([.nodes[] | select(.tag == "button" and .attrs["data-comment-link"] == $id)] | length) == 1
+    and ([sec("History"; "-")[] | select(.tag == "button" and .attrs["data-comment-link"] == $id)] | length) == 1
     and ([.nodes[] | select(.cls == "rb-comment" and .attrs["data-comment"] == $id)] | length) == 1
     and ([.nodes[] | select(.cls == "rb-reply") | .text] | length == 1 and (.[0] | test("rechecked, details below")))
-    and ([.nodes[] | select(.tag == "h5") | .text] == ["Findings"])
-    and ([.nodes[] | select(.tag == "li") | .text] == ["first item", "second item", "step one", "step two"])
-    and ([.nodes[] | select(.tag == "ul" or .tag == "ol") | .tag] == ["ul", "ol"])
-    and ([.nodes[] | select(.tag == "th") | .text] == ["col a", "col b"])
-    and ([.nodes[] | select(.tag == "td") | .text] == ["1", "two"])
-    and ([.nodes[] | select(.tag == "strong") | .text] == ["connector"])
-    and ([.nodes[] | select(.tag == "em") | .text] == ["stale"])
-    and ([.nodes[] | select(.tag == "code") | .text] == ["reset --now", "echo \"<b>x</b> && done\""])
-    and ([.nodes[] | select(.tag == "pre")] | length) == 1
-    and ([.nodes[] | select(.tag == "a" and .attrs.href == "https://example.invalid/docs") | .attrs.rel] == ["noopener noreferrer"])' >/dev/null \
+    and ([sec("History"; "-")[] | select(.tag == "h5") | .text] == ["Findings"])
+    and ([sec("History"; "-")[] | select(.tag == "li") | .text] == ["first item", "second item", "step one", "step two"])
+    and ([sec("History"; "-")[] | select(.tag == "ul" or .tag == "ol") | .tag] == ["ul", "ol"])
+    and ([sec("History"; "-")[] | select(.tag == "th") | .text] == ["col a", "col b"])
+    and ([sec("History"; "-")[] | select(.tag == "td") | .text] == ["1", "two"])
+    and ([sec("History"; "-")[] | select(.tag == "strong") | .text] == ["connector"])
+    and ([sec("History"; "-")[] | select(.tag == "em") | .text] == ["stale"])
+    and ([sec("History"; "-")[] | select(.tag == "code") | .text] == ["reset --now", "echo \"<b>x</b> && done\""])
+    and ([sec("History"; "-")[] | select(.tag == "pre")] | length) == 1
+    and ([sec("History"; "-")[] | select(.tag == "a" and .attrs.href == "https://example.invalid/docs") | .attrs.rel] == ["noopener noreferrer"])' >/dev/null \
     || fail "the answer did not render as Markdown under History: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer" or .cls == "rb-answer__head") | .text]')"
   out=$(render "$board" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"click\":{\"attr\":\"data-comment-link\",\"value\":\"$id\"}}]")
   printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "following the comment link errored: $out"
@@ -1532,9 +1535,9 @@ test_an_answer_for_a_comment_not_on_the_board_names_its_note_without_a_link() {
   entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra gone-note-1 'plain answer')")}" >> "$(log_of "$home")"
   board=$(refresh_board "$home")
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
-  printf '%s' "$out" | jq -e '([.nodes[] | select(.cls == "rb-answer__head") | .text] == ["First mate answer to comment gone-note-1"])
+  printf '%s' "$out" | jq -e "$SEC_DEF"'([.nodes[] | select(.cls == "rb-answer__head") | .text] == ["First mate answer to comment gone-note-1"])
     and ([.nodes[] | select(.attrs["data-comment-link"] != null)] | length) == 0
-    and ([.nodes[] | select(.tag == "p" and .text == "plain answer")] | length) == 1' >/dev/null \
+    and ([sec("History"; "-")[] | select(.tag == "p" and .text == "plain answer")] | length) == 1' >/dev/null \
     || fail "the unlinked answer is wrong: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer__head") | .text]')"
   pass "an answer for a comment that is not on the board names its note id without a link"
 }
@@ -1548,19 +1551,19 @@ test_hostile_answer_markdown_renders_inert() {
   board=$(refresh_board "$home")
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
   printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the hostile answer broke the board: $out"
-  printf '%s' "$out" | jq -e '
+  printf '%s' "$out" | jq -e "$SEC_DEF"'
     ([.nodes[] | select(.tag | IN("script", "img", "svg", "b", "i", "u", "iframe", "object", "embed", "style", "link"))] | length) == 0
     and ([.nodes[] | .attrs | keys[] | select(startswith("on"))] | length) == 0
     and ([.nodes[] | select(.tag == "a") | .attrs.href // ""] | all(startswith("https://")))
-    and ([.nodes[] | select(.tag == "a" and .attrs.href == "https://example.invalid/ok")] | length) == 1
+    and ([sec("History"; "-")[] | select(.tag == "a" and .attrs.href == "https://example.invalid/ok")] | length) == 1
     and ([.nodes[] | select(.cls == "rb-answer") | .text] | .[0]
       | contains("<script>alert(1)</script>") and contains("<img src=x onerror=alert(1)>")
         and contains("[x](javascript:alert(1))") and contains("[y](data:text/html,hi)")
         and contains("<div><div onmouseover=alert(2)>nested</div></div>"))
-    and ([.nodes[] | select(.tag == "strong") | .text] == ["<b onclick=alert(1)>bold</b>"])
-    and ([.nodes[] | select(.tag == "code") | .text] == ["<i>code</i>"])
-    and ([.nodes[] | select(.tag == "th") | .text] == ["<u>h</u>", "k"])
-    and ([.nodes[] | select(.tag == "td") | .text] == ["<svg onload=alert(3)>", "v"])' >/dev/null \
+    and ([sec("History"; "-")[] | select(.tag == "strong") | .text] == ["<b onclick=alert(1)>bold</b>"])
+    and ([sec("History"; "-")[] | select(.tag == "code") | .text] == ["<i>code</i>"])
+    and ([sec("History"; "-")[] | select(.tag == "th") | .text] == ["<u>h</u>", "k"])
+    and ([sec("History"; "-")[] | select(.tag == "td") | .text] == ["<svg onload=alert(3)>", "v"])' >/dev/null \
     || fail "hostile answer text did not render inert: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer") | .text]')"
   pass "hostile answer text (script tags, event attributes, javascript: and data: links, nested HTML) renders inert"
 }
@@ -1582,6 +1585,168 @@ test_an_answer_appears_after_a_poll_without_losing_the_open_panel_or_focus() {
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-answer")] | length == 1' >/dev/null \
     || fail "the answer did not appear in the open panel after the poll"
   pass "an answer appears in the open panel after a poll, keeping scroll and focus"
+}
+
+# --- last response ----------------------------------------------------------
+
+# The Last response section as {head, body, kind}, or null when the panel has none.
+LAST_JQ='. as $d | [sec("Last response"; "Comment")] | if (.[0] | length) == 0 then null else .[0] as $n
+  | ([$n[] | select(.cls == "rb-last__head") | .text] | .[0]) as $head
+  | {kind: ([$d.nodes[] | select(.attrs["data-last-response"] != null) | .attrs["data-last-response"]] | .[0]),
+     head: $head,
+     body: ([$n[] | select(.cls == "rb-last__item") | .text] | .[0] | ltrimstr($head))} end'
+
+last_of() { jq -c "$SEC_DEF$LAST_JQ"; }
+
+open_task() {  # <board> <task>
+  render "$1" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"$2\"}}]"
+}
+
+test_the_last_response_section_sits_directly_above_the_comment_section() {
+  local home board out
+  home=$(make_home last-order)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'the answer')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] as $h
+    | ($h | index("Last response")) as $i | $i != null and $h[$i + 1] == "Comment"' >/dev/null \
+    || fail "Last response is not directly above Comment: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.tag == "h3") | .text]')"
+  pass "the Last response section sits directly above the Comment section"
+}
+
+test_the_last_response_section_is_hidden_when_the_task_has_no_answer_and_no_reply() {
+  local home board out id
+  home=$(make_home last-none)
+  seed_views_log "$home"
+  id=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id r1 --json '[recap task=a iteration=3] unanswered comment' | jq -r .id) \
+    || fail "could not create the comment note"
+  board=$(refresh_board "$home")
+  [ -n "$id" ] || fail "no note id"
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3" and .text == "Comments")] | length == 1' >/dev/null \
+    || fail "the comment did not reach the board"
+  [ "$(printf '%s' "$out" | last_of)" = null ] || fail "a task with a comment but no reply shows Last response"
+  out=$(open_task "$board" b)
+  [ "$(printf '%s' "$out" | last_of)" = null ] || fail "a task with neither shows Last response"
+  pass "the Last response section is hidden when the task has neither an answer nor a reply"
+}
+
+test_the_last_response_keeps_the_answer_after_a_publish_that_omits_it() {
+  local home board out
+  home=$(make_home last-kept)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'kept answer')")}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A later"}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e '.kind == "answer" and (.body | contains("kept answer"))
+    and (.head | startswith("First mate answer to comment n1") and endswith("2026-10-04T09:00:00Z"))' >/dev/null \
+    || fail "the answer did not stay after a publish without it: $(printf '%s' "$out" | last_of)"
+  out=$(render "$board" '[{"click":{"attr":"data-nav","value":"prev"}},{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | last_of | jq -e '.kind == "answer"' >/dev/null \
+    || fail "viewing an earlier iteration hid the last response"
+  pass "the last response keeps the newest answer after a later publish omits it, stamped with the time it was stored"
+}
+
+test_the_last_response_shows_the_iteration_when_the_answer_time_is_out_of_the_window() {
+  local home board out i entries=''
+  home=$(make_home last-window)
+  entries="$(entry 1 '["a"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'old answer')")}")"$'\n'
+  for i in $(seq 2 33); do
+    entries="$entries$(entry "$i" '["a"]' '{}')"$'\n'
+  done
+  printf '%s' "$entries" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e '.kind == "answer" and (.head | endswith(" - iteration 1")) and (.head | test("T09:00:00Z") | not)' >/dev/null \
+    || fail "the answer without a time did not show its iteration: $(printf '%s' "$out" | last_of)"
+  pass "an answer whose iteration left the display window shows its iteration number instead of a time"
+}
+
+test_the_last_response_falls_back_to_the_newest_reply_only_without_an_answer() {
+  local home board out id1 id2
+  home=$(make_home last-reply)
+  seed_views_log "$home"
+  id1=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id r1 --json '[recap task=a iteration=3] first comment' | jq -r .id) || fail "note 1"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" reply "$id1" 'older reply text' >/dev/null || fail "reply 1"
+  sleep 1
+  id2=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id r2 --json '[recap task=a iteration=3] second comment' | jq -r .id) || fail "note 2"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" reply "$id2" 'newer reply text' >/dev/null || fail "reply 2"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e --arg id "$id2" '.kind == "reply" and .body == "newer reply text"
+    and (.head | startswith("First mate reply to comment " + $id) and test(" - 20"))' >/dev/null \
+    || fail "the newest reply did not show: $(printf '%s' "$out" | last_of)"
+  printf '%s' "$out" | jq -e --arg id "$id2" "$SEC_DEF"'[sec("Last response"; "Comment")[] | select(.tag == "button" and .attrs["data-comment-link"] == $id)] | length == 1' >/dev/null \
+    || fail "the reply has no link to its comment"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra "$id1" 'full answer text')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e '.kind == "answer" and (.body | contains("full answer text")) and (.body | contains("reply text") | not)' >/dev/null \
+    || fail "a reply showed beside or instead of the answer: $(printf '%s' "$out" | last_of)"
+  pass "the last response shows the newest reply only while the task has no answer, and the answer wins once it exists"
+}
+
+test_a_newer_answer_replaces_the_older_one_in_the_last_response() {
+  local home board out
+  home=$(make_home last-newer)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'first answer')")}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n2 'second answer')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e '.body == "second answer" and (.head | startswith("First mate answer to comment n2") and endswith("2026-10-05T09:00:00Z"))' >/dev/null \
+    || fail "the newer answer did not replace the older: $(printf '%s' "$out" | last_of)"
+  printf '%s' "$out" | jq -e "$SEC_DEF"'[sec("History"; "-")[] | select(.cls == "rb-answer") | .text] | length == 2' >/dev/null \
+    || fail "History lost an answer"
+  pass "a newer answer replaces the older one in the last response while History keeps both"
+}
+
+test_hostile_markdown_in_the_last_response_renders_inert() {
+  local home board out hostile
+  hostile=$'<script>alert(1)</script>\n[x](javascript:alert(1)) [z](https://example.invalid/ok)\n**<b onclick=alert(1)>bold</b>** `<i>code</i>`\n<div onmouseover=alert(2)>nested</div>'
+  home=$(make_home last-hostile)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 "$hostile")")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | jq -e "$SEC_DEF"'.error == ""
+    and ([sec("Last response"; "Comment")[] | select(.tag | IN("script", "img", "svg", "b", "i", "iframe", "object", "style", "link"))] | length) == 0
+    and ([sec("Last response"; "Comment")[] | .attrs | keys[] | select(startswith("on"))] | length) == 0
+    and ([sec("Last response"; "Comment")[] | select(.tag == "a") | .attrs.href] == ["https://example.invalid/ok"])
+    and ([sec("Last response"; "Comment")[] | select(.tag == "strong") | .text] == ["<b onclick=alert(1)>bold</b>"])
+    and ([sec("Last response"; "Comment")[] | select(.cls == "rb-last__item") | .text] | .[0]
+      | contains("<script>alert(1)</script>") and contains("[x](javascript:alert(1))") and contains("<div onmouseover=alert(2)>nested</div>"))' >/dev/null \
+    || fail "hostile text in the last response did not render inert: $(printf '%s' "$out" | last_of)"
+  pass "hostile Markdown in the last response renders inert"
+}
+
+test_a_poll_updates_the_last_response_keeping_scroll_focus_and_an_unsent_comment() {
+  local home board dir out new="$TMP_ROOT/last-poll-new.js" old="$TMP_ROOT/last-poll-old.js" open poll
+  home=$(make_home last-poll)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'first answer')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  cp "$dir/bearings-board.data.js" "$old"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n2 'second answer')")}" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  cp "$dir/bearings-board.data.js" "$new"
+  cp "$old" "$dir/bearings-board.data.js"
+  open='{"click":{"attr":"data-task","value":"a"}}'
+  poll="{\"poll\":{\"file\":\"$new\"}}"
+  out=$(render "$board" "[$open,{\"panelscroll\":300},$poll]")
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.cls == "rb-drawer__body") | .scrollTop] == [300]) and .focused.attrs["data-close"] == "1"' >/dev/null \
+    || fail "the poll lost the panel scroll or focus: $out"
+  printf '%s' "$out" | last_of | jq -e '.body == "second answer"' >/dev/null || fail "the poll did not show the newer answer: $(printf '%s' "$out" | last_of)"
+  out=$(render "$board" "[$open,{\"fill\":{\"name\":\"comment\",\"value\":\"draft text\"}},$poll]")
+  printf '%s' "$out" | last_of | jq -e '.body == "first answer"' >/dev/null \
+    || fail "a poll redrew over an unsent comment: $(printf '%s' "$out" | last_of)"
+  out=$(render "$board" "[$open,{\"fill\":{\"name\":\"comment\",\"value\":\"draft text\"}},$poll,{\"submit\":{\"question\":\"comment.a\"}}]")
+  printf '%s' "$out" | jq -e '.queued | length == 1 and (.[0].data.text == "draft text")' >/dev/null \
+    || fail "the unsent comment was lost across the poll: $(printf '%s' "$out" | jq -c .queued)"
+  pass "a poll shows the newer last response keeping scroll and focus, and waits while a comment is unsent"
 }
 
 fm_test_run \
@@ -1658,4 +1823,12 @@ fm_test_run \
   test_an_answer_renders_in_history_linked_to_its_comment_and_once_only \
   test_an_answer_for_a_comment_not_on_the_board_names_its_note_without_a_link \
   test_hostile_answer_markdown_renders_inert \
-  test_an_answer_appears_after_a_poll_without_losing_the_open_panel_or_focus
+  test_an_answer_appears_after_a_poll_without_losing_the_open_panel_or_focus \
+  test_the_last_response_section_sits_directly_above_the_comment_section \
+  test_the_last_response_section_is_hidden_when_the_task_has_no_answer_and_no_reply \
+  test_the_last_response_keeps_the_answer_after_a_publish_that_omits_it \
+  test_the_last_response_shows_the_iteration_when_the_answer_time_is_out_of_the_window \
+  test_the_last_response_falls_back_to_the_newest_reply_only_without_an_answer \
+  test_a_newer_answer_replaces_the_older_one_in_the_last_response \
+  test_hostile_markdown_in_the_last_response_renders_inert \
+  test_a_poll_updates_the_last_response_keeping_scroll_focus_and_an_unsent_comment

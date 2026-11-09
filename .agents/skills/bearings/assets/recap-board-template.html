@@ -200,8 +200,8 @@ a { color: inherit; text-decoration: none; }
 .rb-diff__del { color: var(--status-danger); }
 .rb-comment { border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); }
 .rb-reply { margin: 6px 0 0 16px; padding-left: 10px; border-left: 3px solid var(--sea-500); }
-.rb-answer { border: 1px solid var(--border-default); border-left: 3px solid var(--sea-500); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); min-width: 0; }
-.rb-answer__head { font-size: var(--fs-xs); color: var(--text-faint); font-family: var(--font-mono); margin-bottom: 6px; overflow-wrap: anywhere; }
+.rb-answer, .rb-last__item { border: 1px solid var(--border-default); border-left: 3px solid var(--sea-500); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--paper-000); min-width: 0; }
+.rb-answer__head, .rb-last__head { font-size: var(--fs-xs); color: var(--text-faint); font-family: var(--font-mono); margin-bottom: 6px; overflow-wrap: anywhere; }
 .rb-md { font-size: var(--fs-sm); color: var(--text-body); overflow-wrap: anywhere; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .rb-md h4, .rb-md h5, .rb-md h6 { margin: 4px 0 0; color: var(--text-strong); }
 .rb-md p { margin: 0; white-space: pre-wrap; }
@@ -845,25 +845,54 @@ a { color: inherit; text-decoration: none; }
     }
     return root;
   }
-  /* One answer as a History item: the comment it answers (a jump link when that comment is on this board) and the rendered Markdown. */
+  /* The comment id as a jump link when that comment is on this board, else as plain text. */
+  function commentRef(task, to) {
+    if (!task.comments.some(function (c) { return c.id === to; })) return el("span", "", to);
+    var jump = el("button", "fm-btn fm-btn--sm fm-btn--gold", to);
+    jump.type = "button"; jump.setAttribute("data-comment-link", to);
+    jump.addEventListener("click", function () {
+      var n = findAttr(drawer, "data-comment", to);
+      if (n && n.scrollIntoView) n.scrollIntoView({ block: "center" });
+    });
+    return jump;
+  }
+  /* One answer as a History item: the comment it answers and the rendered Markdown. */
   function answerItem(task, a) {
     var box = el("div", "rb-answer"), head = el("div", "rb-answer__head");
     head.appendChild(el("span", "", "First mate answer to comment "));
-    var target = task.comments.filter(function (c) { return c.id === a.to; })[0];
-    if (target) {
-      var jump = el("button", "fm-btn fm-btn--sm fm-btn--gold", a.to);
-      jump.type = "button"; jump.setAttribute("data-comment-link", a.to);
-      jump.addEventListener("click", function () {
-        var n = findAttr(drawer, "data-comment", a.to);
-        if (n && n.scrollIntoView) n.scrollIntoView({ block: "center" });
-      });
-      head.appendChild(jump);
-    } else {
-      head.appendChild(el("span", "", a.to));
-    }
+    head.appendChild(commentRef(task, a.to));
     box.appendChild(head);
     box.appendChild(mdNode(a.text));
     return box;
+  }
+  /* The task's last response, kept on screen above the Comment box. The newest full answer on any
+     revision wins and stays until a newer one replaces it, so a publish that omits the answer does
+     not clear it. With no answer ever, the newest one-line reply to a comment on the task shows.
+     The answer carries no time of its own, so it shows the time of the iteration that stored it,
+     or that iteration's number once the iteration has left the display window. */
+  function lastResponse(parent, task) {
+    var ans = null, iter = 0, rep = null, i;
+    for (i = 0; i < task.revisions.length && !ans; i++) {
+      var a = task.revisions[i].answer;
+      if (a && typeof a.to === "string" && typeof a.text === "string") { ans = a; iter = task.revisions[i].iter; }
+    }
+    if (!ans) task.comments.forEach(function (c) {
+      if (c.reply && typeof c.reply.text === "string" && c.reply.text
+        && (!rep || String(c.reply.at || "") >= String(rep.reply.at || ""))) rep = c;
+    });
+    if (!ans && !rep) return;
+    var panel = el("section", "fm-card rb-panel"), box = el("div", "rb-last__item"), head = el("div", "rb-last__head");
+    panel.setAttribute("data-last-response", ans ? "answer" : "reply");
+    panel.appendChild(el("h3", "", "Last response"));
+    var e = ans ? entryFor(iter) : null;
+    head.appendChild(el("span", "", ans ? "First mate answer to comment " : "First mate reply to comment "));
+    head.appendChild(commentRef(task, ans ? ans.to : rep.id));
+    var when = ans ? (e && e.at ? e.at : "iteration " + iter) : rep.reply.at;
+    if (when) head.appendChild(el("span", "", " - " + when));
+    box.appendChild(head);
+    box.appendChild(ans ? mdNode(ans.text) : el("div", "", rep.reply.text));
+    panel.appendChild(box);
+    parent.appendChild(panel);
   }
 
   function history(parent, task) {
@@ -966,6 +995,7 @@ a { color: inherit; text-decoration: none; }
     ticketsAndMrs(box, rev);
     if (rev.waiting) holdAnswer(box, task, rev);
     actions(box, task, rev);
+    lastResponse(box, task);
     commentBox(box, task);
     commentThread(box, task);
     history(box, task);
