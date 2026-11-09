@@ -104,6 +104,7 @@ Chat then carries one line built from the printed `iteration`, `changed`, `waiti
 Never write the iteration log or read a backlog file yourself.
 A board comment arrives as an inbox note whose body starts with `[recap task=<key> iteration=<n>]`.
 Answer it with `bin/fm-inbox.sh reply <id> <text>` and then run `bin/fm-recap-publish.sh refresh`, which shows the reply without costing an iteration.
+When the full answer (findings, tables, commands) is ready later than that first acknowledgement, add it to the next publish as the task's `answer` field with the comment's note id as `to`, so the board shows it as a new History item in a new iteration; the publish header owns the field shape.
 Hold answers, `merge.<task-id>`, and `dispatch.charted` arrive as the board wake below and follow the same routing.
 An answer on a secondmate-home card arrives as an inbox note whose body starts with `[recap task=<home>:<id> iteration=<n> answer] ` followed by the exact answer text.
 Relay it to that home's secondmate through the normal secondmate steer, then reply to the note with `bin/fm-inbox.sh reply <id> <text>` and run `bin/fm-recap-publish.sh refresh`.

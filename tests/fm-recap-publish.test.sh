@@ -1420,6 +1420,170 @@ test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus() {
   pass "links appear after a poll in the row and the open panel, keeping scroll, panel and focus"
 }
 
+# --- first mate answers on the board ------------------------------------------
+
+ANSWER_NOTE='1700000000-abcdef'
+ANSWER_MD=$'## Findings\n\nThe **connector** is *stale*; see [the docs](https://example.invalid/docs) and `reset --now`.\n\n- first item\n- second item\n\n1. step one\n2. step two\n\n| col a | col b |\n| --- | --- |\n| 1 | two |\n\n```sh\necho "<b>x</b> && done"\n```'
+
+answer_extra() {  # <to> <text>
+  jq -c -n --arg to "$1" --arg text "$2" '{theme: "LW", summary: "A two", answer: {to: $to, text: $text}}'
+}
+
+test_an_answer_is_stored_only_on_the_revision_of_the_publish_that_sends_it() {
+  local home
+  home=$(make_home answer-store)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the first publish failed"
+  write_recap "$home" '{"a":{"answer":{"to":"1700000000-abc","text":"## Done\n\n- one"}},"unknown":{"answer":{"to":"n1","text":"orphan"}}}'
+  publish "$home" >/dev/null || fail "a publish with an answer failed"
+  tail -1 "$(log_of "$home")" | jq -e '(.revisions | keys) == ["a"]
+    and .revisions.a.answer == {to: "1700000000-abc", text: "## Done\n\n- one"}
+    and (.changed_themes | length) == 1' >/dev/null \
+    || fail "the answer was not stored on the one task that carried it: $(tail -1 "$(log_of "$home")")"
+  publish "$home" >/dev/null || fail "the identical resend failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "an identical resend stored the answer twice"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "a publish without an answer failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "an omitted answer made a revision"
+  write_collect "$home" "[$(collected a queued "Task A renamed"), $(collected b queued "Task B")]"
+  publish "$home" >/dev/null || fail "a title change failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a.title == "Task A renamed" and (.revisions.a | has("answer") | not)' >/dev/null \
+    || fail "a later revision kept the old answer: $(tail -1 "$(log_of "$home")")"
+  write_recap "$home" '{"a":{"answer":{"to":"1700000000-abc","text":"second answer"}}}'
+  publish "$home" >/dev/null || fail "a second answer failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a.answer.text == "second answer"' >/dev/null || fail "a new answer was not stored"
+  pass "an answer is stored once on the revision of the publish that sends it and never carried forward"
+}
+
+test_a_bad_answer_publishes_nothing_and_the_size_cap_holds() {
+  local home bad
+  home=$(make_home answer-invalid)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  while IFS= read -r bad; do
+    jq -c -n --argjson a "$bad" '{schema: "fm-recap.v1", tasks: {a: {answer: $a}}}' > "$home/recap.json"
+    publish "$home" >/dev/null 2>&1 && fail "a bad answer published: $bad"
+  done <<'JSON'
+null
+"text"
+["n1","hi"]
+{}
+{"to":"n1"}
+{"text":"hi"}
+{"to":"","text":"hi"}
+{"to":"a b","text":"hi"}
+{"to":"<x>","text":"hi"}
+{"to":"n1","text":""}
+{"to":"n1","text":"   \n "}
+{"to":"n1","text":7}
+{"to":7,"text":"hi"}
+JSON
+  jq -c -n --arg to "$(printf 'n%.0s' $(seq 1 65))" '{schema: "fm-recap.v1", tasks: {a: {answer: {to: $to, text: "hi"}}}}' > "$home/recap.json"
+  publish "$home" >/dev/null 2>&1 && fail "a 65 character note id published"
+  jq -c -n --arg text "$(printf 'x%.0s' $(seq 1 20001))" '{schema: "fm-recap.v1", tasks: {a: {answer: {to: "n1", text: $text}}}}' > "$home/recap.json"
+  publish "$home" >/dev/null 2>&1 && fail "an answer over the size cap published"
+  [ ! -e "$(log_of "$home")" ] || fail "a bad answer wrote the log"
+  jq -c -n --arg text "$(printf 'x%.0s' $(seq 1 20000))" '{schema: "fm-recap.v1", tasks: {a: {answer: {to: "n1", text: $text}}}}' > "$home/recap.json"
+  publish "$home" >/dev/null 2>&1 || fail "an answer at the size cap was refused"
+  pass "a bad answer refuses the publish and writes nothing, and the size cap holds"
+}
+
+test_an_answer_renders_in_history_linked_to_its_comment_and_once_only() {
+  local home board out id
+  home=$(make_home answer-render)
+  seed_views_log "$home"
+  id=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id r1 --json '[recap task=a iteration=3] please recheck' | jq -r .id) \
+    || fail "could not create the comment note"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" reply "$id" 'rechecked, details below' >/dev/null || fail "could not reply to the note"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra "$id" "$ANSWER_MD")")}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' '{}' >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the board errored: $out"
+  printf '%s' "$out" | jq -e --arg id "$id" '
+    ([.nodes[] | select(.cls == "rb-answer")] | length) == 1
+    and ([.nodes[] | select(.cls == "rb-answer__head") | .text] == ["First mate answer to comment " + $id])
+    and ([.nodes[] | select(.tag == "button" and .attrs["data-comment-link"] == $id)] | length) == 1
+    and ([.nodes[] | select(.cls == "rb-comment" and .attrs["data-comment"] == $id)] | length) == 1
+    and ([.nodes[] | select(.cls == "rb-reply") | .text] | length == 1 and (.[0] | test("rechecked, details below")))
+    and ([.nodes[] | select(.tag == "h5") | .text] == ["Findings"])
+    and ([.nodes[] | select(.tag == "li") | .text] == ["first item", "second item", "step one", "step two"])
+    and ([.nodes[] | select(.tag == "ul" or .tag == "ol") | .tag] == ["ul", "ol"])
+    and ([.nodes[] | select(.tag == "th") | .text] == ["col a", "col b"])
+    and ([.nodes[] | select(.tag == "td") | .text] == ["1", "two"])
+    and ([.nodes[] | select(.tag == "strong") | .text] == ["connector"])
+    and ([.nodes[] | select(.tag == "em") | .text] == ["stale"])
+    and ([.nodes[] | select(.tag == "code") | .text] == ["reset --now", "echo \"<b>x</b> && done\""])
+    and ([.nodes[] | select(.tag == "pre")] | length) == 1
+    and ([.nodes[] | select(.tag == "a" and .attrs.href == "https://example.invalid/docs") | .attrs.rel] == ["noopener noreferrer"])' >/dev/null \
+    || fail "the answer did not render as Markdown under History: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer" or .cls == "rb-answer__head") | .text]')"
+  out=$(render "$board" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"click\":{\"attr\":\"data-comment-link\",\"value\":\"$id\"}}]")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "following the comment link errored: $out"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-answer")] | length == 0' >/dev/null \
+    || fail "a task without an answer shows an answer item"
+  pass "an answer renders as one Markdown History item linked to its comment, with the one-line reply unchanged"
+}
+
+test_an_answer_for_a_comment_not_on_the_board_names_its_note_without_a_link() {
+  local home board out
+  home=$(make_home answer-nolink)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra gone-note-1 'plain answer')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '([.nodes[] | select(.cls == "rb-answer__head") | .text] == ["First mate answer to comment gone-note-1"])
+    and ([.nodes[] | select(.attrs["data-comment-link"] != null)] | length) == 0
+    and ([.nodes[] | select(.tag == "p" and .text == "plain answer")] | length) == 1' >/dev/null \
+    || fail "the unlinked answer is wrong: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer__head") | .text]')"
+  pass "an answer for a comment that is not on the board names its note id without a link"
+}
+
+test_hostile_answer_markdown_renders_inert() {
+  local home board out hostile
+  hostile=$'<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n[x](javascript:alert(1)) [y](data:text/html,hi) [z](https://example.invalid/ok)\n**<b onclick=alert(1)>bold</b>** `<i>code</i>`\n<div><div onmouseover=alert(2)>nested</div></div>\n\n| <u>h</u> | k |\n| --- | --- |\n| <svg onload=alert(3)> | v |'
+  home=$(make_home answer-hostile)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 "$hostile")")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the hostile answer broke the board: $out"
+  printf '%s' "$out" | jq -e '
+    ([.nodes[] | select(.tag | IN("script", "img", "svg", "b", "i", "u", "iframe", "object", "embed", "style", "link"))] | length) == 0
+    and ([.nodes[] | .attrs | keys[] | select(startswith("on"))] | length) == 0
+    and ([.nodes[] | select(.tag == "a") | .attrs.href // ""] | all(startswith("https://")))
+    and ([.nodes[] | select(.tag == "a" and .attrs.href == "https://example.invalid/ok")] | length) == 1
+    and ([.nodes[] | select(.cls == "rb-answer") | .text] | .[0]
+      | contains("<script>alert(1)</script>") and contains("<img src=x onerror=alert(1)>")
+        and contains("[x](javascript:alert(1))") and contains("[y](data:text/html,hi)")
+        and contains("<div><div onmouseover=alert(2)>nested</div></div>"))
+    and ([.nodes[] | select(.tag == "strong") | .text] == ["<b onclick=alert(1)>bold</b>"])
+    and ([.nodes[] | select(.tag == "code") | .text] == ["<i>code</i>"])
+    and ([.nodes[] | select(.tag == "th") | .text] == ["<u>h</u>", "k"])
+    and ([.nodes[] | select(.tag == "td") | .text] == ["<svg onload=alert(3)>", "v"])' >/dev/null \
+    || fail "hostile answer text did not render inert: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-answer") | .text]')"
+  pass "hostile answer text (script tags, event attributes, javascript: and data: links, nested HTML) renders inert"
+}
+
+test_an_answer_appears_after_a_poll_without_losing_the_open_panel_or_focus() {
+  local home board dir out new="$TMP_ROOT/answer-poll-new.js"
+  home=$(make_home answer-poll)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir=${board%/*}
+  cp "$dir/bearings-board.data.js" "$TMP_ROOT/answer-poll-old.js"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 "$ANSWER_MD")")}" >> "$(log_of "$home")"
+  refresh_board "$home" >/dev/null
+  cp "$dir/bearings-board.data.js" "$new"
+  cp "$TMP_ROOT/answer-poll-old.js" "$dir/bearings-board.data.js"
+  out=$(render "$board" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"a\"}},{\"panelscroll\":300},{\"poll\":{\"file\":\"$new\"}}]")
+  printf '%s' "$out" | jq -e '.error == "" and ([.nodes[] | select(.cls == "rb-drawer__body") | .scrollTop] == [300]) and .focused.attrs["data-close"] == "1"' >/dev/null \
+    || fail "the poll lost the panel scroll or focus: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-answer")] | length == 1' >/dev/null \
+    || fail "the answer did not appear in the open panel after the poll"
+  pass "an answer appears in the open panel after a poll, keeping scroll and focus"
+}
+
 fm_test_run \
   test_a_board_comment_becomes_one_tagged_inbox_note_and_no_answer \
   test_a_secondmate_answer_reaches_the_first_mate_as_one_answer_note \
@@ -1488,4 +1652,10 @@ fm_test_run \
   test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section \
   test_a_task_with_only_one_link_kind_shows_only_that_group \
   test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \
-  test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus
+  test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus \
+  test_an_answer_is_stored_only_on_the_revision_of_the_publish_that_sends_it \
+  test_a_bad_answer_publishes_nothing_and_the_size_cap_holds \
+  test_an_answer_renders_in_history_linked_to_its_comment_and_once_only \
+  test_an_answer_for_a_comment_not_on_the_board_names_its_note_without_a_link \
+  test_hostile_answer_markdown_renders_inert \
+  test_an_answer_appears_after_a_poll_without_losing_the_open_panel_or_focus

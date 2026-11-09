@@ -38,6 +38,7 @@
 #                                "theme": "LW", "reply_terms": ["merge"],
 #                                "close": "release",
 #                                "on_hold": "waiting: first review feedback",
+#                                "answer": { "to": "<note id>", "text": "..." },
 #                                "links": [{ "kind": "ticket", "code": "ABC-1",
 #                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
@@ -57,6 +58,24 @@
 # other kind, an empty code, or a url that is not http(s) is rejected whole, like
 # any other bad field, and the board makes no network call for a link. An empty
 # list clears a task's links.
+#
+# answer is the first mate's full answer to a board comment, published as a new
+# iteration so it shows on the live board next to the comment it answers:
+#   "answer": { "to": "<inbox note id>", "text": "<markdown>" }
+# to is the id of the comment note being answered (1 to 64 characters of
+# A-Z a-z 0-9 . _ -), the same id `fm-inbox.sh reply` takes. text is Markdown, not
+# blank, at most 20000 characters. A missing key, a non-string, a blank text, or a
+# longer text rejects the publish whole. The answer is stored on the revision of
+# the publish that carries it and nowhere else: it becomes one "First mate answer"
+# item in that iteration's History, linked to the comment when the comment is on
+# the board, and a later publish that omits it neither repeats it nor keeps it on
+# screen. Sending the identical answer again right after it is not stored twice,
+# and an answer for a key with no backlog task is ignored. A task whose only
+# change is an answer still gets a revision, so the iteration shows it as
+# changed. The board renders Markdown as inert DOM text: headings, paragraphs,
+# bullet and numbered lists (one level), tables, fenced and inline code, bold,
+# italic, and [text](http(s) url) links; all other HTML, markup and URL schemes
+# show as plain text. The one-line `fm-inbox.sh reply` keeps working beside it.
 #
 # THE LOG is $DATA/recap-iterations.jsonl in the main home's gitignored data/
 # directory, one fm-recap-iteration.v1 JSON object per line, written only here.
@@ -256,6 +275,9 @@ validate_recap() {  # <recap.json>
       and ((has("theme") | not) or (.theme | type == "string" and test("^[A-Za-z0-9._-]{1,16}$")))
       and ((has("close") | not) or (.close == "done" or .close == "release"))
       and ((has("on_hold") | not) or (.on_hold | type == "string" and length <= 200))
+      and ((has("answer") | not) or (.answer | type == "object"
+        and (.to | type == "string" and test("^[A-Za-z0-9._-]{1,64}$"))
+        and (.text | type == "string" and test("\\S") and length <= 20000)))
       and ((has("reply_terms") | not) or (.reply_terms | type == "array"
         and ([.[] | type == "string" and length > 0 and length <= 64] | all)))
       and ((has("links") | not) or (.links | type == "array"
@@ -328,11 +350,16 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
         # on_hold is stored only while set, so an unmarked task keeps its
         # earlier revision unchanged and a cleared mark drops the field.
         + (($mine.on_hold // $old.on_hold // "") as $h | if $h != "" then {on_hold: $h} else {} end)
+        # answer is never carried over: only the revision of the publish that
+        # sends it holds it, and an identical repeat of the last one is dropped.
+        + (($mine.answer // null) as $a
+            | if $a != null and {to: $a.to, text: $a.text} != $old.answer
+              then {answer: {to: $a.to, text: $a.text}} else {} end)
         + (($mine.links // $old.links // []) as $l
             | ($l + derived($t.title // ""; [$l[].code])) as $l
             | if ($l | length) > 0 then {links: $l} else {} end)
         | {key: $t.key, value: .}
-        | select(.value != $old)] as $changed
+        | select((.value | has("answer")) or (.value | del(.answer)) != ($old | del(.answer)))] as $changed
     | {
         schema: $schema,
         seq: ($prev + 1),
