@@ -902,6 +902,14 @@ fi
 if ! CLAUDE_COMPACT_PRESENT=$(fm_config_source_present "$CONFIG/claude-crew-autocompact-window"); then
   exit 1
 fi
+# claude_compact_window_valid <value>: succeeds for one integer token count from
+# 100000 to 1000000, the one range shared by the config file and its per-spawn flag.
+claude_compact_window_valid() {
+  case "$1" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "${#1}" -le 7 ] && [ "$((10#$1))" -ge 100000 ] && [ "$((10#$1))" -le 1000000 ]
+}
 CLAUDE_COMPACT_WINDOW=
 if [ "$CLAUDE_COMPACT_PRESENT" = 1 ]; then
   if [ ! -f "$CONFIG/claude-crew-autocompact-window" ] || [ ! -r "$CONFIG/claude-crew-autocompact-window" ]; then
@@ -909,16 +917,7 @@ if [ "$CLAUDE_COMPACT_PRESENT" = 1 ]; then
     exit 1
   fi
   CLAUDE_COMPACT_WINDOW=$(tr -d '[:space:]' <"$CONFIG/claude-crew-autocompact-window" || true)
-  CLAUDE_COMPACT_WINDOW_OK=0
-  case "$CLAUDE_COMPACT_WINDOW" in
-  '' | *[!0-9]*) ;;
-  *)
-    if [ "${#CLAUDE_COMPACT_WINDOW}" -le 7 ] && [ "$((10#$CLAUDE_COMPACT_WINDOW))" -ge 100000 ] && [ "$((10#$CLAUDE_COMPACT_WINDOW))" -le 1000000 ]; then
-      CLAUDE_COMPACT_WINDOW_OK=1
-    fi
-    ;;
-  esac
-  if [ "$CLAUDE_COMPACT_WINDOW_OK" != 1 ]; then
+  if ! claude_compact_window_valid "$CLAUDE_COMPACT_WINDOW"; then
     echo "error: config/claude-crew-autocompact-window holds '$CLAUDE_COMPACT_WINDOW'; accepted values are one integer token count from 100000 to 1000000" >&2
     exit 1
   fi
