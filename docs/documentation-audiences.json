@@ -654,31 +654,71 @@
       "audience": "operator-current"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/design.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/design.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/proposal.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/proposal.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/specs/recap-board-actions/spec.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/specs/recap-board-actions/spec.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/specs/recap-board-hosting/spec.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/specs/recap-board-hosting/spec.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/specs/recap-board-views/spec.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/specs/recap-board-views/spec.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/specs/recap-iteration-log/spec.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/specs/recap-iteration-log/spec.md",
       "audience": "maintainer-architecture"
     },
     {
-      "path": "openspec/changes/fleet-recap-board/tasks.md",
+      "path": "openspec/changes/archive/2026-11-10-fleet-recap-board/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/procevent-launch-confirmation/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-actions/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-answers/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-hosting/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-links/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-text-warnings/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-board-views/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/recap-iteration-log/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/session-lock-ownership/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/spawn-autocompact-window/spec.md",
       "audience": "maintainer-architecture"
     },
     {

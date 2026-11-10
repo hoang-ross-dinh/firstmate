@@ -75,8 +75,8 @@ The runner SHALL derive the note's request id from the source id, capture sequen
 The board SHALL create no decision record and SHALL write into no secondmate home.
 
 #### Scenario: Answer relayed
-- **WHEN** the captain sends the term "go" on a card for task "x" in home "pm"
-- **THEN** the inbox holds one note whose body names task "pm:x" and the text "go"
+- **WHEN** the captain sends the term "go" on a card for task "x" in home "mate1"
+- **THEN** the inbox holds one note whose body names task "mate1:x" and the text "go"
 - **AND** the keyed-answer intake receives nothing
 
 #### Scenario: Repeated delivery

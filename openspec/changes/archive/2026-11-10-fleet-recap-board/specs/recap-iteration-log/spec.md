@@ -89,5 +89,5 @@ WHEN a publish completes, the first mate SHALL send one chat line with the itera
 The chat SHALL carry only that one-line pointer to the iteration.
 
 #### Scenario: Chat line content
-- **WHEN** iteration 8 publishes with changes in themes LW and QD and 2 tasks waiting on the captain
-- **THEN** the chat line names iteration 8, themes LW and QD, the count 2, and the board URL
+- **WHEN** iteration 8 publishes with changes in themes AA and ZZ and 2 tasks waiting on the captain
+- **THEN** the chat line names iteration 8, themes AA and ZZ, the count 2, and the board URL

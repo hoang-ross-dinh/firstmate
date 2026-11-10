@@ -5,7 +5,7 @@ The board SHALL group tasks by theme code in the iteration view.
 The iteration view SHALL mark each task as new in this iteration or unchanged since iteration N.
 
 #### Scenario: Theme groups
-- **WHEN** the captain opens an iteration containing tasks with theme codes LW and QD
+- **WHEN** the captain opens an iteration containing tasks with theme codes AA and ZZ
 - **THEN** the board shows one group per theme code with its tasks inside
 
 #### Scenario: Change marks
@@ -21,8 +21,8 @@ The board SHALL order theme groups by the highest priority among their visible r
 - **THEN** the board lists the red row first, the yellow row second, and the green row last
 
 #### Scenario: Group order
-- **WHEN** a theme group named QD holds a red row and a theme group named LW holds only green rows
-- **THEN** the board lists QD before LW
+- **WHEN** a theme group named ZZ holds a red row and a theme group named AA holds only green rows
+- **THEN** the board lists ZZ before AA
 
 #### Scenario: Ties keep the earlier order
 - **WHEN** two rows share a priority
