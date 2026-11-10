@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--autocompact-window <tokens>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--autocompact-window <tokens>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -493,6 +493,13 @@
 #   the launch byte-identical. Any other content, or an unreadable file, refuses
 #   the spawn before any endpoint, worktree, or record exists. The file is not
 #   inherited into secondmate homes.
+#   --autocompact-window <tokens> sets the same variable for one claude ship or
+#   scout launch and wins over the file (flag, then file, then none). It takes
+#   the same 100000-1000000 integer, and anything else refuses the spawn. It is
+#   refused on a secondmate and on a non-claude harness. The value is recorded
+#   as autocompact_window= in state/<id>.meta, so --relaunch replays it (the
+#   flag itself is refused on a relaunch) and a relaunch onto another harness
+#   drops it. A window taken from the file is never recorded.
 # Worker tool exclusions:
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
@@ -1021,6 +1028,9 @@ MODEL_SET=0
 EFFORT_SET=0
 HERMES_PROFILE=
 HERMES_PROFILE_SET=0
+AUTOCOMPACT_ARG=
+AUTOCOMPACT_SET=0
+AUTOCOMPACT_RECORD=
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -1060,6 +1070,10 @@ for a in "$@"; do
     hermes-profile)
       HERMES_PROFILE=$a
       HERMES_PROFILE_SET=1
+      ;;
+    autocompact-window)
+      AUTOCOMPACT_ARG=$a
+      AUTOCOMPACT_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -1125,6 +1139,11 @@ for a in "$@"; do
     ;;
   --hermes-profile) want_value=hermes-profile ;;
   --hermes-profile=*) HERMES_PROFILE=${a#--hermes-profile=}; HERMES_PROFILE_SET=1 ;;
+  --autocompact-window) want_value=autocompact-window ;;
+  --autocompact-window=*)
+    AUTOCOMPACT_ARG=${a#--autocompact-window=}
+    AUTOCOMPACT_SET=1
+    ;;
   --backend) want_value=backend ;;
   --backend=*)
     BACKEND_ARG=${a#--backend=}
@@ -1187,6 +1206,17 @@ fi
   echo "error: --effort requires a non-empty value" >&2
   exit 1
 }
+if [ "$AUTOCOMPACT_SET" -eq 1 ]; then
+  if [ "$KIND" = secondmate ]; then
+    echo 'error: --autocompact-window is for claude ship and scout launches, never a secondmate' >&2
+    exit 1
+  fi
+  if ! claude_compact_window_valid "$AUTOCOMPACT_ARG"; then
+    echo "error: --autocompact-window holds '$AUTOCOMPACT_ARG'; accepted values are one integer token count from 100000 to 1000000" >&2
+    exit 1
+  fi
+  AUTOCOMPACT_ARG=$((10#$AUTOCOMPACT_ARG))
+fi
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || {
   echo "error: --backend requires a non-empty value" >&2
   exit 1
@@ -1259,6 +1289,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
   [ "$UPSTREAM_CONSENT_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded upstream consent; --upstream-consent cannot override it" >&2
+    exit 1
+  }
+  [ "$AUTOCOMPACT_SET" -eq 0 ] || {
+    echo "error: --relaunch reuses the task's recorded auto-compact window; --autocompact-window cannot override it" >&2
     exit 1
   }
 else
@@ -2151,6 +2185,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
   [ "$HERMES_PROFILE_SET" -eq 0 ] || shared_args+=(--hermes-profile "$HERMES_PROFILE")
+  [ "$AUTOCOMPACT_SET" -eq 0 ] || shared_args+=(--autocompact-window "$AUTOCOMPACT_ARG")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -3252,6 +3287,29 @@ fi
 if [ "$HERMES_PROFILE_SET" -eq 1 ] && [ "$HARNESS" != hermes ]; then
   echo "error: --hermes-profile requires --harness hermes" >&2
   exit 1
+fi
+# --autocompact-window (header above) beats config/claude-crew-autocompact-window.
+# A relaunch replays the recorded flag value, and a relaunch onto another harness
+# drops it, as the config value never applies there.
+if [ "$AUTOCOMPACT_SET" -eq 1 ] && [ "$HARNESS" != claude ]; then
+  echo "error: --autocompact-window requires --harness claude" >&2
+  exit 1
+fi
+if [ "$AUTOCOMPACT_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+  echo 'error: --autocompact-window is for claude ship and scout launches, never a secondmate' >&2
+  exit 1
+fi
+if [ "$HARNESS" = claude ] && [ "$KIND" != secondmate ]; then
+  if [ "$AUTOCOMPACT_SET" -eq 1 ]; then
+    AUTOCOMPACT_RECORD=$AUTOCOMPACT_ARG
+  elif [ "$RELAUNCH" -eq 1 ]; then
+    AUTOCOMPACT_RECORD=$(fm_meta_get "$RELAUNCH_META" autocompact_window)
+    if [ -n "$AUTOCOMPACT_RECORD" ] && ! claude_compact_window_valid "$AUTOCOMPACT_RECORD"; then
+      echo "error: $RELAUNCH_META records autocompact_window='$AUTOCOMPACT_RECORD'; accepted values are one integer token count from 100000 to 1000000" >&2
+      exit 1
+    fi
+  fi
+  [ -z "$AUTOCOMPACT_RECORD" ] || CLAUDE_COMPACT_WINDOW=$AUTOCOMPACT_RECORD
 fi
 if [ "$HARNESS" = hermes ]; then
   # shellcheck source=bin/fm-hermes-lib.sh
@@ -7162,7 +7220,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile autocompact_window busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7205,6 +7263,9 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"
   [ "$HARNESS" != hermes ] || { echo "hermes_profile=$HERMES_PROFILE"; echo "hermes_home=$HERMES_PROFILE_HOME"; }
+  # Only a per-spawn flag value is recorded, so a relaunch replays it while a
+  # config-file window keeps being re-read and every other record stays byte-identical.
+  [ -z "$AUTOCOMPACT_RECORD" ] || echo "autocompact_window=$AUTOCOMPACT_RECORD"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.

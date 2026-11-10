@@ -262,7 +262,7 @@ case "${1:-}" in
       printf '%s\n' "$payload" >> "$D/literal"
       case "$payload" in
         /exit|/quit) printf 'zsh' > "$D/command" ;;
-        *'encode launch-brief'*) printf 'codex' > "$D/command" ;;
+        *'encode launch-brief'* | *' claude --'*) printf '%s' "${FM_FAKE_AGENT_CMD:-codex}" > "$D/command" ;;
       esac
     else
       printf '%s\n' "$payload" >> "$D/keys"
@@ -348,6 +348,77 @@ $launch") \
   pass "relaunch rebuilds the compact-adviser switch for the replacement agent in both allowlist postures"
 }
 
+# A relaunch replays a recorded --autocompact-window, a config-file window is
+# never recorded, and the replacement agent starts
+# with the explicit value even when the pane carries a different one.
+relaunch_autocompact_case() {  # <name> <recorded-line-or-empty> <config-or-empty>
+  local name=$1 recorded=$2 config=$3 dir home proj wt id launch preamble seen out status
+  id="relaunch-ac-$name-a1"
+  dir="$TMP_ROOT/relaunch-ac-$name"
+  home="$dir/home"
+  proj="$dir/proj"
+  wt="$dir/wt"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects" "$dir/fake"
+  touch "$home/state/.last-watcher-beat"
+  [ -z "$config" ] || printf '%s\n' "$config" > "$home/config/claude-crew-autocompact-window"
+  make_relaunch_stub "$dir"
+  fm_git_worktree "$proj" "$wt" "wt-relaunch-ac-$name"
+  fm_test_spawn_brief "$home" "$id"
+  : > "$dir/fake/literal"
+  : > "$dir/fake/keys"
+  printf 'zsh' > "$dir/fake/command"
+  printf '%s\n' "fm-$id" > "$dir/fake/windows"
+  printf '%s' "$wt" > "$dir/fake/cwd"
+  {
+    echo "window=fmses:fm-$id"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$wt"
+    echo "project=$proj"
+    echo "harness=claude"
+    echo "kind=ship"
+    echo "mode=no-mistakes"
+    echo "yolo=off"
+    echo "tasktmp=$dir/tasktmp"
+    echo "model=default"
+    echo "effort=default"
+    [ -z "$recorded" ] || echo "autocompact_window=$recorded"
+  } > "$home/state/$id.meta"
+  mkdir -p "$dir/user-home"
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$home" FM_FAKE_DIR="$dir/fake" FM_FAKE_AGENT_CMD=claude \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' FM_SPAWN_NO_GUARD=1 \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    "$CONTROL" "$id" relaunch --note 'replacement continues the same task' 2>&1)
+  status=$?
+  expect_code 0 "$status" "relaunch ($name) should succeed: $out"
+  launch=$(grep ' claude --' "$dir/fake/literal" | tail -1)
+  [ -n "$launch" ] || fail "relaunch ($name) sent no replacement launch command"
+  install_env_probe "$dir/fakebin" claude CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  preamble=$(grep '^export ' "$dir/fake/keys")
+  seen=$(env -i HOME="$dir/user-home" PATH="$dir/fakebin:$PATH" TERM=xterm \
+    TMUX=synthetic-pane CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000 \
+    /bin/sh -c "$preamble
+$launch") \
+    || fail "relaunch ($name): the replacement launch failed to run"
+  RELAUNCH_AC_SEEN=$seen
+  RELAUNCH_AC_META="$home/state/$id.meta"
+}
+
+test_relaunch_replays_the_autocompact_window_flag() {
+  # Recorded flag value beats the config file and the ambient pane value.
+  relaunch_autocompact_case replay 700000 350000
+  assert_equals 700000 "$RELAUNCH_AC_SEEN" "a relaunch must replay the recorded window over the config file and the pane value"
+  grep -qx 'autocompact_window=700000' "$RELAUNCH_AC_META" || fail "the replayed window must stay in meta"
+  # No recorded flag: the config file applies and is not recorded.
+  relaunch_autocompact_case config "" 350000
+  assert_equals 350000 "$RELAUNCH_AC_SEEN" "without a recorded flag the config window must apply on relaunch"
+  ! grep -q 'autocompact_window' "$RELAUNCH_AC_META" || fail "a config-file window must not be recorded"
+  # Neither: the launch sets nothing, so the pane's own value is what the agent sees.
+  relaunch_autocompact_case none "" ""
+  assert_equals 300000 "$RELAUNCH_AC_SEEN" "with no flag and no file the launch must not touch the window"
+  ! grep -q 'autocompact_window' "$RELAUNCH_AC_META" || fail "no window means no record"
+  pass "a relaunch replays the recorded --autocompact-window and never records a config window"
+}
+
 # A command-prefix assignment only covers the first simple command. A raw
 # compound launch such as `cd <dir> && <probe>` must still start the probe with
 # the switch on, so this drives that escape hatch and executes the pane's
@@ -414,6 +485,7 @@ $brief"
 }
 
 test_launch_preserves_literal_home_and_brief_paths
+test_relaunch_replays_the_autocompact_window_flag
 test_ship_allowlist_absent
 test_ship_allowlist_enabled
 test_launch_command_carries_the_switch_without_the_pane_export

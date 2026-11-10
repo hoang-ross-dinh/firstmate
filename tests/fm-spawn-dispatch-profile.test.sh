@@ -2631,6 +2631,88 @@ test_claude_crew_autocompact_window_reaches_workers_only() {
   pass "config/claude-crew-autocompact-window reaches claude crewmates and scouts only and refuses invalid values"
 }
 
+# --autocompact-window sets the same variable for one claude launch: the flag
+# beats config/claude-crew-autocompact-window, only a flag value is recorded in
+# meta (tests/fm-spawn-compact-adviser-disable.test.sh drives the relaunch
+# replay), and a bad value, a secondmate, or a non-claude harness refuses before
+# any launch.
+test_autocompact_window_flag_overrides_config() {
+  local rec id out status launch bad meta
+  id=ac-flag-z40
+  rec=$(make_spawn_case ac-flag claude "$id" ac-flag-bare-z41 ac-flag-cfg-z42 ac-flag-bad-z43 ac-flag-sm-z44)
+  read_case_record "$rec"
+  meta="$HOME_DIR/state/$id.meta"
+
+  # Flag with a config file present: the flag wins and is recorded.
+  printf '350000\n' > "$HOME_DIR/config/claude-crew-autocompact-window"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --autocompact-window 700000 2>&1)
+  status=$?
+  expect_code 0 "$status" "flag spawn should succeed"$'\n'"$out"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=700000 " "the flag value must reach the launch"
+  assert_not_contains "$launch" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000" "the config value must lose to the flag"
+  assert_grep "autocompact_window=700000" "$meta" "meta must record the flag value"
+
+  # Flag without any config file.
+  rm -f "$HOME_DIR/config/claude-crew-autocompact-window"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" ac-flag-bare-z41 "$PROJ_DIR" --autocompact-window=700000 2>&1)
+  status=$?
+  expect_code 0 "$status" "flag-only spawn should succeed"$'\n'"$out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=700000 " "the flag must work without a config file"
+
+  # No flag keeps today's behavior: the config value applies and is not recorded.
+  printf '350000\n' > "$HOME_DIR/config/claude-crew-autocompact-window"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" ac-flag-cfg-z42 "$PROJ_DIR" 2>&1)
+  status=$?
+  expect_code 0 "$status" "config-only spawn should succeed"$'\n'"$out"
+  assert_contains "$(cat "$LAUNCH_LOG")" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 " "without the flag the config value must apply"
+  assert_not_contains "$(cat "$HOME_DIR/state/ac-flag-cfg-z42.meta")" "autocompact_window" "a config value must not be recorded in meta"
+
+  # Invalid values refuse before any launch or record, with the config file absent or present.
+  for bad in 99999 1000001 12abc 1.5 ''; do
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" ac-flag-bad-z43 "$PROJ_DIR" "--autocompact-window=$bad" 2>&1)
+    status=$?
+    expect_code 1 "$status" "flag value '$bad' must refuse the spawn"
+    assert_contains "$out" "--autocompact-window" "refusal must name the flag for '$bad'"
+    assert_contains "$out" "100000 to 1000000" "refusal must name the accepted range for '$bad'"
+    [ ! -s "$LAUNCH_LOG" ] || fail "an invalid flag value '$bad' must launch nothing"
+    assert_absent "$HOME_DIR/state/ac-flag-bad-z43.meta" "refusal must happen before meta is written"
+  done
+
+  # A relaunch replays the recorded value and refuses the flag before any change.
+  printf 'preserve existing task metadata\n' > "$HOME_DIR/state/ac-flag-bad-z43.meta"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" ac-flag-bad-z43 --relaunch --autocompact-window 700000 2>&1)
+  status=$?
+  expect_code 1 "$status" "a relaunch with the flag must refuse"
+  assert_contains "$out" "--autocompact-window cannot override" "refusal must say why"
+  [ "$(cat "$HOME_DIR/state/ac-flag-bad-z43.meta")" = 'preserve existing task metadata' ] || fail "a refused relaunch changed the record"
+  rm -f "$HOME_DIR/state/ac-flag-bad-z43.meta"
+
+  # A secondmate never takes the flag.
+  local sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" ac-flag-sm-z44
+  out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" ac-flag-sm-z44 "$sm" --secondmate --autocompact-window 700000 2>&1)
+  status=$?
+  expect_code 1 "$status" "a secondmate spawn with the flag must refuse"
+  assert_contains "$out" "never a secondmate" "refusal must say why"
+  pass "--autocompact-window beats the config file, is recorded, and refuses invalid values and secondmates"
+}
+
+test_autocompact_window_flag_refuses_non_claude_harness() {
+  local rec id out status
+  id=ac-flag-codex-z45
+  rec=$(make_spawn_case ac-flag-codex codex "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --autocompact-window 700000 2>&1)
+  status=$?
+  expect_code 1 "$status" "the flag must refuse a non-claude harness"
+  assert_contains "$out" "--autocompact-window requires --harness claude" "refusal must say why"
+  [ ! -s "$LAUNCH_LOG" ] || fail "a refused flag must launch nothing"
+  assert_absent "$HOME_DIR/state/$id.meta" "refusal must happen before meta is written"
+  pass "--autocompact-window refuses a non-claude harness before any launch"
+}
+
 test_non_claude_harness_ignores_claude_permission_mode() {
   local rec id out status launch
   id=permmode-codex-z23
@@ -2843,6 +2925,8 @@ test_claude_permission_mode_auto_reaches_scout_launch
 test_claude_worker_launch_covers_task_channel_dirs
 test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
 test_claude_crew_autocompact_window_reaches_workers_only
+test_autocompact_window_flag_overrides_config
+test_autocompact_window_flag_refuses_non_claude_harness
 test_non_claude_harness_ignores_claude_permission_mode
 test_non_claude_harness_ignores_config_dir
 test_claude_task_launch_carries_control_channel_authority

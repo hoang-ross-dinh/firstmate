@@ -1474,6 +1474,15 @@ An absent file leaves the launch unchanged.
 Any other content or an unreadable file refuses the spawn before any endpoint, worktree, or task record exists, and the diagnostic names the file and the accepted range.
 The file is read on every spawn and relaunch and is not inherited into secondmate homes.
 
+A per-spawn `--autocompact-window <n>` flag on `bin/fm-spawn.sh` sets the window for one Claude ship or scout launch, for example a long-running interview worker that must not compact early.
+It takes the same integer from 100000 to 1000000 and refuses any other value with a diagnostic that names the flag and the accepted range.
+The precedence is the flag, then the config file, then no variable.
+The launch line carries the value explicitly, so it also beats a value the worker inherits from the tmux server environment.
+The flag is refused on secondmate launches and on a non-Claude harness, because neither receives the variable.
+The value is recorded in the task record as `autocompact_window=` only when the flag (or an earlier recorded flag) supplied it, and a relaunch replays it.
+A relaunch refuses the flag, like the other recorded launch values, and one that switches to a non-Claude harness drops the recorded value.
+A window that came from the config file is never recorded, so editing the file still reaches the next relaunch.
+
 ## Worker tool exclusions (config/crew-exclude-tools)
 
 The optional local, gitignored `config/crew-exclude-tools` hides named tools from this home's ship and scout workers, for example to keep an MCP server's write tools out of reach while its read tools stay available.
