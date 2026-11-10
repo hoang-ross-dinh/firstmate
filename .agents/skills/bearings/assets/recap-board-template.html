@@ -274,6 +274,15 @@ a { color: inherit; text-decoration: none; }
   var JIRA_BASE = "";
   function setJiraBase() { JIRA_BASE = typeof data.jira_base === "string" ? data.jira_base : ""; }
   setJiraBase();
+  /* The ticket key pattern is the recap ticket setting the publish carries in the payload. A pattern the browser cannot compile disables key checks. */
+  var TICKET_RE = null;
+  function setTicketRe() {
+    TICKET_RE = null;
+    if (typeof data.ticket_re !== "string" || !data.ticket_re) return;
+    try { TICKET_RE = new RegExp(data.ticket_re, "g"); } catch (e) { TICKET_RE = null; }
+  }
+  setTicketRe();
+  var MIN_SUMMARY_WORDS = 25;
   var COMMENT_LIMIT = 2000;
   var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
     "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
@@ -299,11 +308,12 @@ a { color: inherit; text-decoration: none; }
     }
     return a;
   }
-  /* Ticket and MR links come from the recap data. Only an http or https URL becomes an href, never a javascript: one, and the page makes no request for it. */
+  var LINK_KINDS = ["ticket", "mr", "slack", "doc"];
+  /* Ticket, MR, Slack, and document links come from the recap data. Only an http or https URL becomes an href, never a javascript: one, and the page makes no request for it. */
   function xlinks(rev) {
     var out = [];
     (rev && Array.isArray(rev.links) ? rev.links : []).forEach(function (l) {
-      if (l && (l.kind === "ticket" || l.kind === "mr") && typeof l.code === "string" && l.code
+      if (l && LINK_KINDS.indexOf(l.kind) !== -1 && typeof l.code === "string" && l.code
         && typeof l.url === "string" && /^https?:\/\/\S+$/i.test(l.url)) out.push(l);
     });
     return out;
@@ -362,6 +372,24 @@ a { color: inherit; text-decoration: none; }
       if (keep) rows.push({ task: t, rev: rev, hidden: hidden });
     });
     return rows;
+  }
+  /* A task the recap never described carries the default "misc" theme and no summary, so it
+     shows no Recap badge. A recap line is a summary, an emoji, or a theme other than the default. */
+  function hasRecap(rev) { return !!(rev.summary || rev.emoji || (rev.theme && rev.theme !== "misc")); }
+  /* The text warnings of an open task. The board only flags: no summary, a summary under the
+     minimum words, or a summary naming a ticket key or MR reference that no link carries. */
+  function textFlags(rev) {
+    var out = [], s = (rev.summary || "").trim();
+    if (rev.state === "done") return out;
+    if (!s) { out.push({ badge: "no summary", text: "No summary yet." }); return out; }
+    var words = s.split(/\s+/).length;
+    if (words < MIN_SUMMARY_WORDS) out.push({ badge: "short summary", text: "The summary has " + words + " words, under " + MIN_SUMMARY_WORDS + "." });
+    var have = {}, missing = [];
+    xlinks(rev).forEach(function (l) { have[l.code] = true; });
+    var refs = (TICKET_RE ? (s.match(TICKET_RE) || []) : []).concat(s.match(/![0-9]+/g) || []);
+    refs.forEach(function (ref) { if (!have[ref] && missing.indexOf(ref) === -1) missing.push(ref); });
+    if (missing.length) out.push({ badge: "unlinked ref", text: "The summary names " + missing.join(", ") + " with no matching link." });
+    return out;
   }
   /* priority is the row emoji: red 0, yellow 1, green 2, anything else last */
   function rank(r) {
@@ -591,6 +619,8 @@ a { color: inherit; text-decoration: none; }
       chips.appendChild(chip);
     });
     app.appendChild(chips);
+    var flagged = rowsFor(st.iter, "open").filter(function (r) { return textFlags(r.rev).length > 0; }).length;
+    if (flagged) app.appendChild(el("div", "rb-row__mark", flagged + " open " + (flagged === 1 ? "task needs" : "tasks need") + " text attention"));
     var groups = groupRows(rowsFor(st.iter, st.filter));
     if (!groups.length) app.appendChild(el("div", "rb-empty", "No tasks match this filter."));
     groups.forEach(function (g) {
@@ -620,6 +650,7 @@ a { color: inherit; text-decoration: none; }
     if (r.rev.waiting) badges.appendChild(badge("warn", "waiting on you"));
     if (r.rev.on_hold) badges.appendChild(badge("hold", "On Hold"));
     if (r.rev.blockers) badges.appendChild(badge("danger", "blocked"));
+    textFlags(r.rev).forEach(function (f) { badges.appendChild(badge("warn", f.badge)); });
     badges.appendChild(badge(stateTone(r.rev.state), r.rev.state));
     if (r.hidden) badges.appendChild(badge("neutral", "hidden"));
     row.appendChild(badges);
@@ -944,7 +975,7 @@ a { color: inherit; text-decoration: none; }
     if (!all.length) return;
     var sec = el("section", "fm-card rb-panel");
     sec.appendChild(el("h3", "", "Tickets & MRs"));
-    [["ticket", "Tickets"], ["mr", "MRs"]].forEach(function (g) {
+    [["ticket", "Tickets"], ["mr", "MRs"], ["slack", "Slack"], ["doc", "Docs"]].forEach(function (g) {
       var items = all.filter(function (l) { return l.kind === g[0]; });
       if (!items.length) return;
       sec.appendChild(el("div", "rb-row__mark", g[1]));
@@ -981,9 +1012,15 @@ a { color: inherit; text-decoration: none; }
     if (rev.blockers) badges.appendChild(badge("danger", "blocked"));
     badges.appendChild(badge("neutral", rev.home));
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
-    if (rev.theme) badges.appendChild(badge("neutral", "Recap " + rev.theme));
+    if (hasRecap(rev)) badges.appendChild(badge("neutral", "Recap " + rev.theme));
     top.appendChild(badges);
     if (rev.summary) top.appendChild(el("div", "", rev.summary));
+    textFlags(rev).forEach(function (f) {
+      var w = el("div", "fm-card rb-warn");
+      w.appendChild(badge("warn", f.badge));
+      w.appendChild(el("div", "rb-row__sub", f.text));
+      top.appendChild(w);
+    });
     if (rev.on_hold) top.appendChild(el("div", "rb-row__sub", rev.on_hold));
     if (rev.blockers) top.appendChild(el("div", "rb-row__sub", "blocked by " + rev.blockers));
     var links = el("div", "rb-links");
@@ -1084,7 +1121,7 @@ a { color: inherit; text-decoration: none; }
     var y = window.scrollY || 0;
     var top = panelBody && st.task ? panelBody.scrollTop : 0;
     var focus = focusKey(document.activeElement);
-    data = next; dataSig = JSON.stringify(next); setJiraBase();
+    data = next; dataSig = JSON.stringify(next); setJiraBase(); setTicketRe();
     first = data.iterations.length ? data.iterations[0].seq : data.iteration;
     if (was === 0) st.iter = data.iteration;
     else if (data.iteration > was && st.iter < data.iteration) st.arrived = true;

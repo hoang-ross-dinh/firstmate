@@ -183,6 +183,115 @@ test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title()
   pass "the real collection keys a task by its bare id and reads its quoted title"
 }
 
+# A synthetic backlog home with a tasks-axi backlog and nothing else.
+make_backlog_home() {  # <name>
+  local home
+  home=$(make_home "$1")
+  mkdir -p "$home/config" "$home/projects"
+  fm_test_tasks_toml "$home/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  printf '%s\n' "$home"
+}
+
+# Register <sm-home> as the local second mate <id> in the main home's registry.
+register_secondmate() {  # <main-home> <id> <sm-home>
+  printf -- '- %s - synthetic mate (home: %s; scope: synthetic; projects: r; added 2026-01-01)\n' "$2" "$3" \
+    >> "$1/data/secondmates.md"
+}
+
+# Publish through the real collection (no collect file) and print the output.
+publish_real() {  # <home> [env...]
+  local home=$1
+  shift
+  home_run "$home" env -u FM_RECAP_COLLECT_FILE FM_CONFIG_OVERRIDE="$home/config" "$@" \
+    "$PUBLISH" publish "$home/recap.json" 2>&1
+}
+
+test_a_backlog_task_without_a_recap_line_shows_in_open_without_a_recap_badge() {
+  local home out board
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_backlog_home plain-task)
+  (cd "$home" && tasks-axi add described "Described task" --repo r >/dev/null \
+    && tasks-axi add plain-task "Plain task title" --repo r >/dev/null) || fail "could not create the tasks"
+  write_recap "$home" '{"described":{"theme":"LW","summary":"has a line"}}'
+  publish_real "$home" >/dev/null || fail "publish failed"
+  board=$(refresh_board "$home")
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"plain-task"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.attrs["data-filter"] == "open") | .text] == ["Open (2)"]' >/dev/null \
+    || fail "Open did not count both tasks: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.attrs["data-filter"] != null) | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row__title")) | .text] | index("Plain task title") != null' >/dev/null \
+    || fail "the task without a recap line is not a row in Open"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row__sub")) | .text] | index("") == null' >/dev/null \
+    || fail "a row rendered an empty summary line"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text | select(test("^Recap"))] == []' >/dev/null \
+    || fail "the panel of a task without a recap line shows a Recap badge"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"described"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("fm-badge")) | .text | select(test("^Recap"))] == ["Recap LW"]' >/dev/null \
+    || fail "the panel of a task with a recap line lost its Recap badge"
+  pass "a backlog task without a recap line shows in Open, with no empty summary and no Recap badge"
+}
+
+test_second_mate_queued_in_flight_and_held_tasks_show_in_open() {
+  local home sm out board
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_backlog_home sm-main)
+  sm=$(make_backlog_home sm-mate)
+  (cd "$sm" && tasks-axi add sm-queued "Mate queued task" --repo r >/dev/null \
+    && tasks-axi add sm-flying "Mate in flight task" --repo r >/dev/null && tasks-axi start sm-flying >/dev/null \
+    && tasks-axi add sm-held "Mate held task" --repo r >/dev/null \
+    && tasks-axi hold sm-held --reason "synthetic wait" --kind captain >/dev/null \
+    && tasks-axi add sm-blocked "Mate blocked task" --repo r >/dev/null \
+    && tasks-axi block sm-blocked --by sm-queued >/dev/null) || fail "could not create the mate tasks"
+  (cd "$home" && tasks-axi add main-queued "Main queued task" --repo r >/dev/null) || fail "could not create the main task"
+  register_secondmate "$home" mate1 "$sm"
+  write_recap "$home" '{}'
+  publish_real "$home" >/dev/null || fail "publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '(.tasks | sort) == ["main-queued","mate1:sm-blocked","mate1:sm-flying","mate1:sm-held","mate1:sm-queued"]
+    and .revisions["mate1:sm-flying"].state == "in_flight" and .revisions["mate1:sm-held"].held == true
+    and .revisions["mate1:sm-blocked"].blockers == "sm-queued"' >/dev/null \
+    || fail "the log does not hold every task of main and the mate: $(tail -1 "$(log_of "$home")")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.attrs["data-filter"] == "open") | .text] == ["Open (5)"]
+    and ([.nodes[] | select(.cls | test("rb-row__title")) | .text | select(. != "secondmate mate1")] | sort)
+      == ["Main queued task","Mate blocked task","Mate held task","Mate in flight task","Mate queued task"]' >/dev/null \
+    || fail "Open does not show every open task of main and the mate: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls | test("rb-row__title")) | .text]')"
+  pass "queued, in-flight, held, and blocked tasks of a second mate show in Open beside main's"
+}
+
+test_a_listing_that_hits_the_limit_is_read_again_in_full() {
+  local home i
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_backlog_home list-limit)
+  for i in 1 2 3 4 5; do (cd "$home" && tasks-axi add "cap-$i" "Capped $i" --repo r >/dev/null) || fail "could not create task $i"; done
+  write_recap "$home" '{}'
+  publish_real "$home" FM_RECAP_LIST_LIMIT=2 >/dev/null || fail "publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '(.tasks | length) == 5' >/dev/null \
+    || fail "a listing capped below the backlog size hid tasks: $(tail -1 "$(log_of "$home")" | jq -c .tasks)"
+  pass "a listing that hits the limit is read again in full"
+}
+
+test_a_task_whose_show_call_fails_keeps_its_row_from_the_listing() {
+  local home out fakebin real
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
+  home=$(make_backlog_home show-fails)
+  (cd "$home" && tasks-axi add good-task "Good task" --repo r >/dev/null \
+    && tasks-axi add broken-task "Broken, task" --repo r >/dev/null) || fail "could not create the tasks"
+  fakebin="$home/fakebin"; real=$(command -v tasks-axi)
+  cat > "$fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+[ "\${1-}" = show ] && [ "\${2-}" = broken-task ] && exit 1
+exec "$real" "\$@"
+SH
+  chmod +x "$fakebin/tasks-axi"
+  write_recap "$home" '{}'
+  out=$(publish_real "$home") || fail "publish failed: $out"
+  tail -1 "$(log_of "$home")" | jq -e '(.tasks | sort) == ["broken-task","good-task"]
+    and .revisions["broken-task"].title == "Broken, task" and .revisions["broken-task"].state == "queued" and .warnings == []' >/dev/null \
+    || fail "a failed show call dropped the task or its home: $(tail -1 "$(log_of "$home")")"
+  pass "a task whose show call fails keeps its row from the listing"
+}
+
 test_publish_builds_the_board_while_away_mode_is_active() {
   local home out
   command -v tasks-axi >/dev/null 2>&1 || { pass "skipped: tasks-axi not found"; return 0; }
@@ -1198,6 +1307,41 @@ JSON
   pass "a bad link entry refuses the publish and writes nothing"
 }
 
+test_slack_and_doc_links_are_accepted_stored_and_rendered() {
+  local home board out
+  home=$(make_home links-slack-doc)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" '{"a":{"links":[
+    {"kind":"slack","code":"thread-1","url":"https://chat.example.invalid/t/1","text":"Synthetic thread"},
+    {"kind":"doc","code":"design-1","url":"https://docs.example.invalid/d/1"}]}}'
+  publish "$home" >/dev/null || fail "a recap with slack and doc links did not publish"
+  tail -1 "$(log_of "$home")" | jq -e '[.revisions.a.links[].kind] == ["slack", "doc"]' >/dev/null \
+    || fail "the slack and doc links were not stored: $(tail -1 "$(log_of "$home")")"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["thread-1", "design-1"]' >/dev/null \
+    || fail "the row did not carry the slack and doc chips: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlink") | .text]')"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("Slack") != null and index("Docs") != null)' >/dev/null \
+    || fail "the panel did not show the Slack and Docs groups"
+  pass "slack and doc links are accepted, stored, and rendered as chips and panel groups"
+}
+
+test_a_validation_error_names_the_task_key_and_the_field() {
+  local home out
+  home=$(make_home links-error-text)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" '{"a":{"links":[{"kind":"slack","code":"ok","url":"https://chat.example.invalid/t/1"},
+    {"kind":"epic","code":"X-1","url":"https://example.invalid/a"}],"summary":3}}'
+  out=$(publish "$home" 2>&1) && fail "an invalid recap published: $out"
+  printf '%s\n' "$out" | grep -qx 'fm-recap-publish: task a: links\[1\].kind must be one of ticket, mr, slack, doc (got "epic")' \
+    || fail "the error did not name the task key, link index, and kind: $out"
+  printf '%s\n' "$out" | grep -qx 'fm-recap-publish: task a: summary must be a string' \
+    || fail "the error did not name the task key and the summary field: $out"
+  [ ! -e "$(log_of "$home")" ] || fail "an invalid recap wrote the log"
+  pass "a validation error names the task key and the failing field"
+}
+
 # --- derived ticket chips -----------------------------------------------------
 
 TICKET_URL_TEMPLATE='https://tracker.example.invalid/browse/{key}'
@@ -1317,6 +1461,67 @@ test_republishing_with_derived_chips_makes_no_new_revision() {
 }
 
 link_anchors() { jq -c '[.nodes[] | select(.tag == "a" and ((.attrs.href // "") | startswith("https://example.invalid/")))]'; }
+
+# Twenty-five words, so a summary built on it is never "short".
+LONG_SUMMARY='one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour twentyfive'
+
+# Render the open task <key> of the built board and print the page JSON.
+render_task() {  # <board> <task-key>
+  render "$1" "[{\"click\":{\"attr\":\"data-task\",\"value\":\"$2\"}}]"
+}
+
+warn_texts() { jq -c '[.nodes[] | select(.cls | test("fm-card rb-warn")) | .text]'; }
+
+test_text_warnings_flag_each_open_task_and_leave_a_clean_one_alone() {
+  local home board out recap
+  home=$(ticket_home text-flags "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected nosum queued "Task none"), $(collected shortsum queued "Task short"), $(collected unlinked queued "Task unlinked"), $(collected clean in_flight "Task clean"), $(collected finished done "Task finished")]"
+  recap=$(jq -c -n --arg long "$LONG_SUMMARY" '{
+    shortsum: {summary: "Only a few words here."},
+    unlinked: {summary: ($long + " EXAMPLE-9 and !42")},
+    clean: {summary: ($long + " EXAMPLE-7 and !12"), links: [
+      {kind: "ticket", code: "EXAMPLE-7", url: "https://tracker.example.invalid/browse/EXAMPLE-7"},
+      {kind: "mr", code: "!12", url: "https://git.example.invalid/r/-/merge_requests/12"}]},
+    finished: {summary: "short"}}')
+  write_recap "$home" "$recap"
+  publish "$home" >/dev/null || fail "publish failed"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "fm-badge fm-badge--warn") | .text] | sort == ["no summary", "short summary", "unlinked ref"]' >/dev/null \
+    || fail "the rows did not carry exactly the three warnings: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls | test("fm-badge")) | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | index("3 open tasks need text attention") != null' >/dev/null \
+    || fail "the list did not count the three flagged open tasks"
+  render_task "$board" nosum | warn_texts | jq -e 'length == 1 and (.[0] | test("no summary"))' >/dev/null \
+    || fail "the panel of a task with no summary lacks its warning"
+  render_task "$board" shortsum | warn_texts | jq -e 'length == 1 and (.[0] | test("5 words"))' >/dev/null \
+    || fail "the panel of a task with a short summary lacks its warning"
+  render_task "$board" unlinked | warn_texts | jq -e 'length == 1 and (.[0] | test("EXAMPLE-9, !42 with no matching link"))' >/dev/null \
+    || fail "the panel of a task with unlinked references lacks its warning: $(render_task "$board" unlinked | warn_texts)"
+  render_task "$board" clean | warn_texts | jq -e '. == []' >/dev/null \
+    || fail "a clean task got a warning"
+  render_task "$board" finished | warn_texts | jq -e '. == []' >/dev/null \
+    || fail "a finished task got a warning"
+  pass "text warnings flag a missing, short, or unlinked summary on an open task and leave a clean one alone"
+}
+
+test_the_ticket_key_warning_uses_the_recap_ticket_setting_only() {
+  local home board out
+  home=$(ticket_home text-key-setting "$TICKET_URL_TEMPLATE" 'CUSTOM-[0-9]+')
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" "$(jq -c -n --arg long "$LONG_SUMMARY" '{a: {summary: ($long + " CUSTOM-3 and EXAMPLE-9")}}')"
+  publish "$home" >/dev/null || fail "publish failed"
+  board=$(refresh_board "$home")
+  render_task "$board" a | warn_texts | jq -e 'length == 1 and (.[0] | test("names CUSTOM-3 with no matching link"))' >/dev/null \
+    || fail "the custom key pattern was not the one used: $(render_task "$board" a | warn_texts)"
+  home=$(make_home text-key-none)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" "$(jq -c -n --arg long "$LONG_SUMMARY" '{a: {summary: ($long + " EXAMPLE-9 and !5")}}')"
+  publish "$home" >/dev/null || fail "publish without a ticket setting failed"
+  board=$(refresh_board "$home")
+  render_task "$board" a | warn_texts | jq -e 'length == 1 and (.[0] | test("names !5 with no matching link")) and (.[0] | test("EXAMPLE") | not)' >/dev/null \
+    || fail "without a ticket setting a key was checked: $(render_task "$board" a | warn_texts)"
+  pass "the ticket key warning uses the recap ticket setting and checks no key without one"
+}
 
 test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
   local home board out
@@ -1756,6 +1961,10 @@ fm_test_run \
   test_a_repeated_delivery_of_one_capture_replays_the_same_note \
   test_each_publish_appends_one_iteration_with_the_next_sequence_number \
   test_the_real_collection_keys_a_task_by_its_bare_id_and_reads_its_quoted_title \
+  test_a_backlog_task_without_a_recap_line_shows_in_open_without_a_recap_badge \
+  test_second_mate_queued_in_flight_and_held_tasks_show_in_open \
+  test_a_listing_that_hits_the_limit_is_read_again_in_full \
+  test_a_task_whose_show_call_fails_keeps_its_row_from_the_listing \
   test_publish_builds_the_board_while_away_mode_is_active \
   test_a_backlog_change_without_a_publish_creates_no_iteration \
   test_only_changed_tasks_get_a_revision \
@@ -1806,6 +2015,8 @@ fm_test_run \
   test_a_failed_poll_keeps_the_last_data_and_shows_a_stale_note \
   test_publish_accepts_links_and_stores_them_only_when_present_or_changed \
   test_publish_refuses_a_bad_link_entry_and_writes_nothing \
+  test_slack_and_doc_links_are_accepted_stored_and_rendered \
+  test_a_validation_error_names_the_task_key_and_the_field \
   test_no_ticket_url_config_derives_no_chips \
   test_a_title_key_with_no_links_gets_a_derived_chip \
   test_an_explicit_link_with_the_same_code_is_not_duplicated_and_stays_first \
@@ -1814,6 +2025,8 @@ fm_test_run \
   test_a_custom_key_regex_on_line_two_is_used \
   test_a_bad_template_or_regex_warns_once_and_the_publish_succeeds \
   test_republishing_with_derived_chips_makes_no_new_revision \
+  test_text_warnings_flag_each_open_task_and_leave_a_clean_one_alone \
+  test_the_ticket_key_warning_uses_the_recap_ticket_setting_only \
   test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section \
   test_a_task_with_only_one_link_kind_shows_only_that_group \
   test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \

@@ -39,7 +39,7 @@
 #                                "close": "release",
 #                                "on_hold": "waiting: first review feedback",
 #                                "answer": { "to": "<note id>", "text": "..." },
-#                                "links": [{ "kind": "ticket", "code": "ABC-1",
+#                                "links": [{ "kind": "ticket|mr|slack|doc", "code": "ABC-1",
 #                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
 # secondmate home. Every field is optional. A task without an entry, or an entry
@@ -52,12 +52,14 @@
 # mark. Only the first mate sets it, so the backlog does not carry it and an
 # omitted field keeps the last value. A longer string than 200 characters or any
 # non-string value is rejected whole, like any other bad field. links is the list of
-# tickets and merge requests the board shows as chips on the row and under
-# "Tickets & MRs" in the detail panel: kind is "ticket" or "mr", code and an
-# http(s) url are required, text is an optional short title. A publish with any
-# other kind, an empty code, or a url that is not http(s) is rejected whole, like
-# any other bad field, and the board makes no network call for a link. An empty
-# list clears a task's links.
+# tickets, merge requests, Slack threads, and documents the board shows as chips on
+# the row and under "Tickets & MRs" in the detail panel: kind is "ticket", "mr",
+# "slack", or "doc", code and an http(s) url are required, text is an optional
+# short title. A publish with any other kind, an empty code, or a url that is not
+# http(s) is rejected whole, like any other bad field, and the board makes no
+# network call for a link. An empty list clears a task's links.
+# A rejected publish prints one line per problem, each naming the task key and the
+# field (a link names its index and sub-field, such as links[1].kind).
 #
 # answer is the first mate's full answer to a board comment, published as a new
 # iteration so it shows on the live board next to the comment it answers:
@@ -97,12 +99,20 @@
 # links, after the explicit links. An invalid file disables derivation with one
 # warning on stderr and the publish still succeeds.
 #
+# TASK TEXT WARNINGS. The board flags, and never writes, text on an open task: no
+# summary, a summary under 25 words, or a summary that names a ticket key or an MR
+# reference (!123) with no link of that code. The ticket key pattern is the one
+# from config/recap-ticket-url, carried to the page as the payload field ticket_re,
+# so without that setting only MR references are checked.
+#
 # THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations are navigable,
 # and every task carries all of its revisions in full, so the board renders each
 # one as the same card. The log keeps everything.
 #
 # FM_RECAP_COLLECT_FILE (tests only) replaces the backlog collection with a
 # JSON file of the shape { "tasks": [...], "warnings": [...] }.
+# FM_RECAP_LIST_LIMIT (tests only) replaces the first listing limit of 1000. A
+# listing that still reports `count: N of M total` is read again at M.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -183,19 +193,36 @@ task_from_show() {  # <show-output>
     | from_entries'
 }
 
-# One home'"'"'s tasks as a JSON array, or nothing and a failure when its backlog
-# cannot be read through tasks-axi.
+# One home's tasks as a JSON array, or nothing and a failure when its backlog
+# cannot be read through tasks-axi. Every listed task becomes a row: a task whose
+# show call fails or cannot be parsed keeps the id, state, kind, repo, and title
+# the listing gave, so one unreadable task never hides the rest of its home.
 collect_home() {  # <home-name> <home-dir> <snapshot-prs-json>
-  local name=$1 dir=$2 prs=$3 listing id show rows='[]' task
+  local name=$1 dir=$2 prs=$3 listing total line id base show parsed task rows='[]'
+  local row_re='^[[:space:]]{2}([A-Za-z0-9._-]+),([^,]*),([^,]*),([^,]*),(.*)$'
   local run=(env)
   if [ "$name" != main ]; then
     run+=(-u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE "FM_HOME=$dir")
   fi
-  listing=$("${run[@]}" "$SCRIPT_DIR/fm-tasks-axi.sh" list --limit 1000 2>/dev/null) || return 1
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    show=$("${run[@]}" "$SCRIPT_DIR/fm-tasks-axi.sh" show "$id" --full 2>/dev/null) || return 1
-    task=$(task_from_show "$show") || return 1
+  listing=$("${run[@]}" "$SCRIPT_DIR/fm-tasks-axi.sh" list --limit "${FM_RECAP_LIST_LIMIT:-1000}" 2>/dev/null) || return 1
+  # A capped listing says `count: N of M total`; read it again at M so no task is cut off.
+  total=$(printf '%s\n' "$listing" | sed -n 's/^count: [0-9]* of \([0-9][0-9]*\) total.*/\1/p' | head -1)
+  if [ -n "$total" ]; then
+    listing=$("${run[@]}" "$SCRIPT_DIR/fm-tasks-axi.sh" list --limit "$total" 2>/dev/null) || return 1
+  fi
+  while IFS= read -r line; do
+    [[ "$line" =~ $row_re ]] || continue
+    id=${BASH_REMATCH[1]}
+    base=$(jq -c -n --arg id "$id" --arg state "${BASH_REMATCH[2]}" --arg kind "${BASH_REMATCH[3]}" \
+      --arg repo "${BASH_REMATCH[4]}" --arg title "${BASH_REMATCH[5]}" '
+      {id: $id, state: $state, kind: $kind, repo: $repo,
+       title: ((try ($title | fromjson | select(type == "string")) catch null) // $title)}') || return 1
+    parsed='{}'
+    if show=$("${run[@]}" "$SCRIPT_DIR/fm-tasks-axi.sh" show "$id" --full 2>/dev/null </dev/null); then
+      parsed=$(task_from_show "$show") || parsed='{}'
+    fi
+    task=$(jq -c -n --argjson base "$base" --argjson shown "$parsed" '
+      $base + (if ($shown | type) == "object" and (($shown.id // "") != "") then $shown else {} end)') || return 1
     rows=$(jq -c --arg home "$name" --argjson t "$task" --argjson prs "$prs" '
       def clean($v; $none): if ($v == null) or ($v == "-") or ($v == $none) then "" else $v end;
       def url($re): ((($t.links // "") | [scan("https?://[^\\s,]+")] | map(select(test($re))) | first) // "");
@@ -217,7 +244,7 @@ collect_home() {  # <home-name> <home-dir> <snapshot-prs-json>
         issue_url: url("/(issues|browse)/"),
         note: ($t.body // "")
       }]' <<< "$rows") || return 1
-  done < <(printf '%s\n' "$listing" | sed -n 's/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*/\1/p')
+  done <<< "$listing"
   printf '%s\n' "$rows"
 }
 
@@ -266,26 +293,55 @@ collect() {
 
 # --- revisions ----------------------------------------------------------------
 
+# Print one line per problem on stderr, each naming the failing task key and
+# field (a link names its index and sub-field), and fail when there is any.
 validate_recap() {  # <recap.json>
-  jq -e --arg schema "$RECAP_SCHEMA" '
-    type == "object" and .schema == $schema and (.tasks | type == "object")
-    and ([.tasks[] | type == "object"
-      and ((has("summary") | not) or (.summary | type == "string"))
-      and ((has("emoji") | not) or (.emoji | type == "string"))
-      and ((has("theme") | not) or (.theme | type == "string" and test("^[A-Za-z0-9._-]{1,16}$")))
-      and ((has("close") | not) or (.close == "done" or .close == "release"))
-      and ((has("on_hold") | not) or (.on_hold | type == "string" and length <= 200))
-      and ((has("answer") | not) or (.answer | type == "object"
-        and (.to | type == "string" and test("^[A-Za-z0-9._-]{1,64}$"))
-        and (.text | type == "string" and test("\\S") and length <= 20000)))
-      and ((has("reply_terms") | not) or (.reply_terms | type == "array"
-        and ([.[] | type == "string" and length > 0 and length <= 64] | all)))
-      and ((has("links") | not) or (.links | type == "array"
-        and ([.[] | type == "object"
-          and (.kind == "ticket" or .kind == "mr")
-          and (.code | type == "string" and length > 0 and length <= 64)
-          and (.url | type == "string" and test("^https?://[^\\s]+$"))
-          and ((has("text") | not) or (.text | type == "string"))] | all)))] | all)' "$1" >/dev/null
+  local problems
+  problems=$(jq -r --arg schema "$RECAP_SCHEMA" '
+    def isstr: type == "string";
+    if type != "object" then "recap data must be a JSON object"
+    elif .schema != $schema then "schema must be \($schema)"
+    elif (.tasks | type) != "object" then "tasks must be an object"
+    else
+      (.tasks | to_entries[]) as $e | $e.key as $k | $e.value as $v
+      | def field($name; ok; $msg):
+          if ($v | has($name)) and ($v[$name] | ok | not) then "task \($k): \($name) \($msg)" else empty end;
+        if ($v | type) != "object" then "task \($k): the entry must be an object"
+        else
+          field("summary"; isstr; "must be a string"),
+          field("emoji"; isstr; "must be a string"),
+          field("theme"; isstr and test("^[A-Za-z0-9._-]{1,16}$"); "must be 1 to 16 letters, digits, dots, dashes, or underscores"),
+          field("close"; . == "done" or . == "release"; "must be \"done\" or \"release\""),
+          field("on_hold"; isstr and length <= 200; "must be a string of 200 characters or fewer"),
+          field("answer"; type == "object"
+            and (.to | isstr and test("^[A-Za-z0-9._-]{1,64}$"))
+            and (.text | isstr and test("\\S") and length <= 20000);
+            "must be {to: <note id>, text: <non-blank text of 20000 characters or fewer>}"),
+          field("reply_terms"; type == "array" and ([.[] | isstr and length > 0 and length <= 64] | all);
+            "must be an array of strings of 1 to 64 characters"),
+          (if ($v | has("links")) then
+             if ($v.links | type) != "array" then "task \($k): links must be an array"
+             else
+               ($v.links | to_entries[]) as $le | $le.key as $i | $le.value as $l
+               | "task \($k): links[\($i)]" as $at
+               | if ($l | type) != "object" then "\($at) must be an object"
+                 else
+                   (if (["ticket", "mr", "slack", "doc"] | index($l.kind)) then empty
+                    else "\($at).kind must be one of ticket, mr, slack, doc (got \($l.kind | tojson))" end),
+                   (if ($l.code | isstr and length > 0 and length <= 64) then empty
+                    else "\($at).code must be a string of 1 to 64 characters" end),
+                   (if ($l.url | isstr and test("^https?://[^\\s]+$")) then empty
+                    else "\($at).url must be an http or https URL without spaces" end),
+                   (if ($l | has("text") | not) or ($l.text | isstr) then empty
+                    else "\($at).text must be a string" end)
+                 end
+             end
+           else empty end)
+        end
+    end' "$1" 2>&1) || problems="recap data could not be checked: $problems"
+  [ -n "$problems" ] || return 0
+  printf '%s\n' "$problems" | head -20 | sed 's/^/fm-recap-publish: /' >&2
+  return 1
 }
 
 # The ticket-chip derivation setting from config/recap-ticket-url, as the globals
@@ -403,7 +459,7 @@ jira_base() {
 }
 
 compose_board() {  # <entries.json> <home-name>
-  jq -c -n --arg schema "$BOARD_SCHEMA" --arg home "$2" --arg jira "$(jira_base)" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  jq -c -n --arg schema "$BOARD_SCHEMA" --arg home "$2" --arg jira "$(jira_base)" --arg ticket_re "$TICKET_RE" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson window "$WINDOW" --slurpfile entries "$1" '
     ($entries[0] | sort_by(.seq)) as $entries
     | ($entries | last) as $latest
@@ -412,6 +468,7 @@ compose_board() {  # <entries.json> <home-name>
       schema: $schema,
       home: $home,
       jira_base: $jira,
+      ticket_re: $ticket_re,
       generated: $at,
       iteration: $latest.seq,
       window: $window,
@@ -499,6 +556,7 @@ command_publish() {
 
 command_refresh() {
   local work entries out
+  load_ticket_derivation
   work=$(mktemp -d "${TMPDIR:-/tmp}/fm-recap-publish.XXXXXX") || fail "cannot stage the refresh"
   read_log > "$work/entries.json"
   [ "$(jq length "$work/entries.json")" -gt 0 ] || { rm -rf -- "$work"; fail "no iteration has been published yet"; }
