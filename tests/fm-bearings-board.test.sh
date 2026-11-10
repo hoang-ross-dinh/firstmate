@@ -11,6 +11,12 @@ set -u
 BOARD="$ROOT/bin/fm-bearings-board.sh"
 TMP_ROOT=$(fm_test_tmproot fm-bearings-board)
 
+# The arm and reconcile waits return as soon as the detached listener claims its
+# source, so a long deadline costs nothing when the claim is prompt. The 3s
+# default is shorter than a detached runner's start on a loaded host, where it
+# turned a slow claim into "listener is not running" and failed a sound build.
+export FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=30
+
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 # A lavish-axi stub that reproduces the shapes verified against the real
@@ -594,7 +600,7 @@ test_build_refuses_to_arm_when_the_session_stays_ended() {
 }
 
 test_build_starts_a_listener_for_an_already_armed_board() {
-  local home data board out sid claim
+  local home data board out sid claim pgid deadline
   home=$(make_home relisten)
   data="$home/payload.json"
   board="$home/.lavish/bearings-board.html"
@@ -606,9 +612,17 @@ test_build_starts_a_listener_for_an_already_armed_board() {
   # would, then rebuild. `already-armed` must not be the end of the story.
   claim="$home/procevent-claims/$sid.claim"
   assert_present "$claim" "the first build left no listener to lose"
-  kill -KILL -"$(sed -n '2p' "$claim")" 2>/dev/null || true
-  kill -KILL "$(sed -n '2p' "$claim")" 2>/dev/null || true
-  sleep 1
+  pgid=$(sed -n '2p' "$claim")
+  kill -KILL -"$pgid" 2>/dev/null || true
+  kill -KILL "$pgid" 2>/dev/null || true
+  # Reconcile refuses to replace a claim while any member of its group remains,
+  # and a killed group can outlive a fixed pause on a loaded host, so wait on
+  # the same group check rather than on time.
+  deadline=$((SECONDS + 30))
+  while kill -0 -"$pgid" 2>/dev/null; do
+    [ "$SECONDS" -lt "$deadline" ] || fail "the killed listener group did not exit"
+    sleep 0.05
+  done
 
   out=$(run_board "$home" build "$data") || fail "the rebuild failed"
   assert_contains "$out" "already-armed: $sid" "the rebuild re-registered the source: $out"

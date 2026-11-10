@@ -16,6 +16,12 @@ PUBLISH="$ROOT/bin/fm-recap-publish.sh"
 HARNESS="$ROOT/tests/assets/recap-render-harness.mjs"
 TMP_ROOT=$(fm_test_tmproot fm-recap-publish)
 
+# Every publish and refresh builds the board, which waits for its detached
+# listener to claim the source. That wait returns on the claim, so a long
+# deadline costs nothing when the claim is prompt, while the 3s default is
+# shorter than a runner's start on a loaded host and failed sound builds.
+export FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=30
+
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v node >/dev/null 2>&1 || { echo "skip: node not found"; exit 0; }
 
