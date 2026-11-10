@@ -286,6 +286,30 @@ test_fixture_repo_branch_is_pinned() {
   pass "fixture repositories pin their initial branch to main"
 }
 
+# The process-event claim store is machine-wide by default, and a reconcile in
+# any home takes the lock of every claim it finds there, so a suite left on the
+# default contends with the operator's live sources. Each suite must get a
+# private store of its own, removed when the suite exits.
+test_suite_claim_root_is_private() {
+  local root fake_home claims default
+  root=$(fm_test_tmproot fm-claim-root-isolation) || fail "could not create a fixture root"
+  fake_home="$root/home"
+  mkdir -p "$fake_home"
+  default="$fake_home/.local/state/firstmate/procevent-claims"
+  # shellcheck disable=SC2016 # the inner shell expands these, not this one
+  claims=$(env -u FM_PROCEVENT_CLAIM_ROOT -u XDG_STATE_HOME HOME="$fake_home" \
+    bash -c '. "$1/tests/lib.sh" && printf "%s\n" "$FM_PROCEVENT_CLAIM_ROOT"' _ "$ROOT") \
+    || fail "a suite could not source tests/lib.sh"
+  [ -n "$claims" ] || fail "a suite runs with no private claim root"
+  case "$claims" in
+    "$default" | "$default"/* | "$fake_home"/*)
+      fail "a suite inherits the machine-wide claim root: $claims" ;;
+  esac
+  [ ! -e "$(dirname "$claims")" ] \
+    || fail "a suite's private claim root outlived the suite: $claims"
+  pass "every suite gets a private claim root that it removes on exit"
+}
+
 test_unknown_pool_is_refused
 test_family_pool_json_identifies_admission
 test_list_candidates_nonempty_and_stable
@@ -295,3 +319,4 @@ test_list_exclusions_documents_reasons
 test_family_map_labels_this_contract
 test_parallel_shards_consume_the_proven_set
 test_fixture_repo_branch_is_pinned
+test_suite_claim_root_is_private

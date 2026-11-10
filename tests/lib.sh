@@ -420,6 +420,13 @@ trap 'fm_test_cleanup; exit 143' TERM
 trap 'fm_test_cleanup; exit 129' HUP
 trap 'fm_test_cleanup; exit 131' QUIT
 
+# The process-event claim root is machine-wide by default, and reconcile walks
+# every claim in it under that source's lock, so a fixture home left on the
+# default would take the operator's real source locks and leave its claims
+# beside theirs. Every suite gets a private root; a suite may still set its own.
+FM_PROCEVENT_CLAIM_ROOT="$(fm_test_tmproot fm-test-procevent-claims)/claims" || return 1
+export FM_PROCEVENT_CLAIM_ROOT
+
 # fm_test_reap_orphans: best-effort sweep for fixture roots left behind by a
 # prior run that was killed hard enough to skip the traps above (e.g. a
 # SIGKILL timeout). Only removes directories carrying the .fm-test-fixture
