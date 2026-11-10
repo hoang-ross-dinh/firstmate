@@ -2368,6 +2368,134 @@ lk_key=$(launch_failed_wake_keys "$HLK" "$LK_ID")
 pe "$HLK" retire "$LK_ID" >/dev/null 2>&1 || true
 pass "a 64-char source id keeps the launch-failed key within the watcher's marker bound"
 
+# --- a runner slower than the confirm window is not a failed launch ----------
+# Under host load a healthy runner can claim after the window ends; reconcile
+# used to report that launch failed and wake firstmate about a source that was
+# live a moment later. The seam delays the runner before its claim: a `ps` shim
+# sleeps on the FIRST process-group query only, which is the runner's own
+# isolation check (reconcile itself never asks for a pgid), and is otherwise
+# the real ps. The one-shot token keeps the runner's owner guard fast.
+SLOW="$TMP_ROOT/slow-claim"; mkdir -p "$SLOW/bin"
+REAL_PS=$(command -v ps)
+cat > "$SLOW/bin/ps" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *pgid=*)
+    if [ -n "\${SLOW_PGID_TOKEN:-}" ] \\
+      && mv -- "\$SLOW_PGID_TOKEN" "\$SLOW_PGID_TOKEN.taken.\$\$" 2>/dev/null; then
+      sleep "\${SLOW_PGID_SECONDS:-3}"
+      # die: the runner's whole group goes before it ever claims.
+      [ "\${SLOW_PGID_ACTION:-}" != die ] || kill -KILL 0
+    fi
+    ;;
+esac
+exec "$REAL_PS" "\$@"
+SH
+chmod +x "$SLOW/bin/ps"
+# A private claim root keeps the shim's one token away from other homes' live
+# claims, whose checks would otherwise query a pgid first and spend it.
+SLOW_SAVED_CLAIM_ROOT=$FM_PROCEVENT_CLAIM_ROOT
+export FM_PROCEVENT_CLAIM_ROOT="$SLOW/claims"
+slow_reconcile() {  # <home> <token> <seconds> <confirm-seconds> [die]; sets slow_out slow_rc
+  slow_rc=0
+  slow_out=$(PATH="$SLOW/bin:$PATH" SLOW_PGID_TOKEN="$2" SLOW_PGID_SECONDS="$3" SLOW_PGID_ACTION="${5-}" \
+    FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS="$4" pe "$1" reconcile) || slow_rc=$?
+}
+wait_live() {  # <home> <source-id> [tries]
+  local _
+  for _ in $(seq 1 "${3:-150}"); do
+    [ "$(pe "$1" list | awk -v id="$2" '$1 == id { print $3 }')" = live ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+HSC="$TMP_ROOT/hsc"; new_home "$HSC"
+fm_test_track_procevent_home "$HSC" "$FM_PROCEVENT_CLAIM_ROOT"
+pe_register "$HSC" lavish slow-src -- "$BLOCKER" "$TMP_ROOT/slow-src.never" x >/dev/null
+: > "$SLOW/token-1"
+slow_reconcile "$HSC" "$SLOW/token-1" 3 1
+[ ! -e "$SLOW/token-1" ] || fail "fixture invalid: the slow-claim seam never delayed the runner"
+[ "$slow_rc" -eq 0 ] || fail "a runner still starting made reconcile exit $slow_rc: $slow_out"
+assert_contains "$slow_out" "failed=0" "a runner still starting was reported failed: $slow_out"
+assert_contains "$slow_out" "uncertain=1" "a runner still starting was not left unsettled: $slow_out"
+[ "$(launch_failed_wake_count "$HSC" slow-src)" = 0 ] \
+  || fail "a runner still starting raised a launch-failed wake: $slow_out"
+wait_live "$HSC" slow-src || fail "the slow runner never took its claim"
+slow_reconcile "$HSC" "" 0 1
+[ "$slow_rc" -eq 0 ] && assert_contains "$slow_out" "failed=0" \
+  "the cycle after a slow runner claimed reported a failure: $slow_out"
+[ "$(launch_failed_wake_count "$HSC" slow-src)" = 0 ] \
+  || fail "a slow runner that claimed was announced as a launch failure"
+pass "a runner that claims after the confirm window is not reported as a failed launch"
+
+# The other half of the same rule: a runner that stays alive and still has not
+# claimed by the next cycle is a real failure, and that cycle starts no second
+# runner behind it (a second one would claim at once here, reporting started=1).
+pe "$HSC" retire slow-src >/dev/null 2>&1 || true
+pe_register "$HSC" lavish stuck-src -- "$BLOCKER" "$TMP_ROOT/stuck-src.never" x >/dev/null
+: > "$SLOW/token-2"
+slow_reconcile "$HSC" "$SLOW/token-2" 8 1
+assert_contains "$slow_out" "uncertain=1" "the stuck runner was not first left unsettled: $slow_out"
+slow_reconcile "$HSC" "" 0 1
+[ "$slow_rc" -ne 0 ] || fail "a runner stuck before its claim for a whole cycle passed reconcile: $slow_out"
+assert_contains "$slow_out" "failed=1" "a runner stuck before its claim was not reported failed: $slow_out"
+assert_contains "$slow_out" "started=0" "reconcile started a second runner behind a stuck one: $slow_out"
+[ "$(launch_failed_wake_count "$HSC" stuck-src)" = 1 ] \
+  || fail "a runner stuck before its claim was not announced once: $slow_out"
+wait_live "$HSC" stuck-src 300 || fail "the stuck runner never took its claim once released"
+slow_reconcile "$HSC" "" 0 1
+[ "$slow_rc" -eq 0 ] && assert_contains "$slow_out" "failed=0" \
+  "a stuck runner that finally claimed was still reported failed: $slow_out"
+pe "$HSC" retire stuck-src >/dev/null 2>&1 || true
+pass "a runner still unclaimed a cycle later is a failed launch, with no duplicate runner"
+
+# A runner still starting at the window's end that then dies before its claim
+# is a failed launch too: the next cycle reports it, then launches again.
+pe_register "$HSC" lavish die-src -- "$BLOCKER" "$TMP_ROOT/die-src.never" x >/dev/null
+: > "$SLOW/token-4"
+slow_reconcile "$HSC" "$SLOW/token-4" 3 1 die
+assert_contains "$slow_out" "uncertain=1" "the dying runner was not first left unsettled: $slow_out"
+die_marker=$(find "$HSC" -name '.die-src.launch-pending' | head -1)
+[ -n "$die_marker" ] || fail "fixture invalid: no pending launch was recorded for the dying runner"
+die_pid=$(head -1 "$die_marker")
+for _ in $(seq 1 200); do kill -0 "$die_pid" 2>/dev/null || break; sleep 0.05; done
+! kill -0 "$die_pid" 2>/dev/null || fail "fixture invalid: the dying runner never died"
+slow_reconcile "$HSC" "" 0 3
+[ "$slow_rc" -ne 0 ] || fail "a runner that died before its claim passed reconcile: $slow_out"
+assert_contains "$slow_out" "failed=1" "a runner that died before its claim was not reported failed: $slow_out"
+assert_contains "$slow_out" "started=1" "the source was not launched again after its runner died: $slow_out"
+[ "$(launch_failed_wake_count "$HSC" die-src)" = 1 ] \
+  || fail "a runner that died before its claim was not announced once: $slow_out"
+pe "$HSC" retire die-src >/dev/null 2>&1 || true
+pass "a runner that dies before its claim after the window is still a failed launch"
+
+# A launch that loses the claim to a live owner is a no-op, not a failure: the
+# reconcile runner is held before its claim while an attached start takes the
+# source, and the late runner then finds it owned and exits.
+pe_register "$HSC" lavish race-src -- "$BLOCKER" "$TMP_ROOT/race-src.never" x >/dev/null
+: > "$SLOW/token-3"
+( slow_reconcile "$HSC" "$SLOW/token-3" 3 6; printf '%s\n' "$slow_out" ) > "$SLOW/race-reconcile.out" &
+race_reconcile=$!
+for _ in $(seq 1 100); do [ -e "$SLOW/token-3" ] || break; sleep 0.05; done
+[ ! -e "$SLOW/token-3" ] || fail "fixture invalid: the reconcile runner was never held"
+pe "$HSC" start race-src > "$SLOW/race-start.out" 2>&1 &
+race_start=$!
+wait "$race_reconcile" || true
+assert_contains "$(cat "$SLOW/race-reconcile.out")" "failed=0" \
+  "a launch that lost the claim to a live owner was reported failed: $(cat "$SLOW/race-reconcile.out")"
+slow_rc=0
+slow_out=$(FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=1 pe "$HSC" reconcile) || slow_rc=$?
+[ "$slow_rc" -eq 0 ] && assert_contains "$slow_out" "failed=0" \
+  "a live owner was followed by a failure report: $slow_out"
+[ "$(launch_failed_wake_count "$HSC" race-src)" = 0 ] \
+  || fail "a launch that lost the claim to a live owner raised a launch-failed wake"
+touch "$TMP_ROOT/race-src.never"
+wait "$race_start" 2>/dev/null || true
+pe "$HSC" retire race-src >/dev/null 2>&1 || true
+pass "a launch that loses the claim to a live owner is not reported as a failure"
+export FM_PROCEVENT_CLAIM_ROOT="$SLOW_SAVED_CLAIM_ROOT"
+
 # --- reconcile reports only launches it actually confirmed -------------------
 # The reported incident. A review board the captain had answered sat collecting
 # nothing while `reconcile` reported a start on every run: `detach_runner` is

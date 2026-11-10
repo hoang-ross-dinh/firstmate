@@ -76,8 +76,15 @@
 #            start would otherwise be counted exactly like one that is
 #            listening, and a wedged source would go on presenting as armed.
 #            Every launch is counted as `started` only after the source is
-#            observed owned or its launch-pacing stamp has moved, `failed`
-#            otherwise, and any failure also makes this command exit non-zero.
+#            observed owned or its launch-pacing stamp has moved, and `failed`
+#            when its runner exited without either; any failure also makes this
+#            command exit non-zero. A runner still alive but unproved when the
+#            window ends is counted `uncertain`, because load can delay a
+#            healthy claim past the window. If the next cycle finds that same
+#            runner alive and the source still unowned, the launch is `failed`
+#            and no second runner is started behind it; if it finds the runner
+#            gone without ever having claimed, the launch is `failed` and the
+#            source is launched again.
 #            One bounded window covers a whole cycle's launches
 #            (FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS; docs/configuration.md).
 #            A launch that fails to confirm is also announced as a durable
@@ -431,6 +438,57 @@ runner_file()  { printf '%s/%s.runner\n' "$REG" "$1"; }
 staging_file() { printf '%s/.%s.%s.output\n' "$REG" "$1" "$2"; }
 stranded_file() { printf '%s/.%s.stranded\n' "$REG" "$1"; }
 launch_failed_file() { printf '%s/.%s.launch-failed\n' "$REG" "$1"; }
+launch_pending_file() { printf '%s/.%s.launch-pending\n' "$REG" "$1"; }
+
+# A launch reconcile could not prove within its window but whose runner is still
+# alive is recorded here as <pid>, <identity>, <registration-identity> and the
+# launch-pacing stamp read before the launch, so the next cycle can tell a
+# runner that was merely slow (it claims) from one that never gets to its claim.
+record_launch_pending() {  # <source-id> <runner-pid> <registration-identity> <launch-stamp-before>
+  local id=$1 pid=$2 identity tmp
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  tmp=$(umask 077; mktemp "$REG/.$id.launch-pending.XXXXXX") || return 1
+  if printf '%s\n%s\n%s\n%s\n' "$pid" "$identity" "$3" "$4" > "$tmp" \
+    && mv -f -- "$tmp" "$(launch_pending_file "$id")"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
+}
+
+# 0 while the runner recorded by record_launch_pending is still the same live
+# process. Any other answer forgets the record, so a runner that claimed,
+# refused, or died never holds a later launch back. A runner found gone without
+# ever advancing the launch-pacing stamp of the still-current registration died
+# before its claim, so that answer also sets LAUNCH_PENDING_DIED=1.
+launch_still_pending_locked() {  # <source-id>
+  local marker pid identity registration before stamp mark
+  LAUNCH_PENDING_DIED=0
+  marker=$(launch_pending_file "$1")
+  [ -f "$marker" ] || return 1
+  { IFS= read -r pid && IFS= read -r identity && IFS= read -r registration \
+      && IFS= read -r before; } < "$marker" 2>/dev/null || pid=
+  case "$pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      [ -n "$identity" ] \
+        && [ "$(fm_pid_identity "$pid" 2>/dev/null)" = "$identity" ] \
+        && return 0
+      ;;
+  esac
+  rm -f -- "$marker"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$registration" ] \
+    && [ "$(fm_pr_file_identity "$(source_file "$1")" 2>/dev/null)" = "$registration" ] \
+    && stamp=$(fm_procevent_launch_floor_stamp_path "$STATE" "$1" "$registration") \
+    || return 1
+  mark=$(cat -- "$stamp" 2>/dev/null || true)
+  if [ -z "$mark" ] || [ "$mark" = "$before" ]; then
+    LAUNCH_PENDING_DIED=1
+  fi
+  return 1
+}
 
 # Let the source's own adapter apply and acknowledge one captured result. See
 # the header for why this exists and what each exit means. An already
@@ -941,8 +999,9 @@ publish_pending() {  # [result-file-to-skip]
 # the runner's own owner guard). The guard deliberately gets its OWN group
 # rather than joining the runner's: it has to survive the group signal it sends,
 # and a member of the runner's group would also make that group read as alive
-# after the runner itself is gone.
-isolate_process() {  # <wait|detach> <command> [argv...]
+# after the runner itself is gone. `spawn` detaches like `detach` but prints the
+# leader's pid, so a caller can tell a launch still starting from one that died.
+isolate_process() {  # <wait|detach|spawn> <command> [argv...]
   local mode=$1 program
   shift
   # shellcheck disable=SC2016 # Perl owns every $ expression in this literal program.
@@ -951,9 +1010,14 @@ isolate_process() {  # <wait|detach> <command> [argv...]
     if ($pid == 0) {
       setpgrp(0, 0) or exit 125;
       $ENV{FM_PROCEVENT_RUNNER_GROUP} = $$;
+      if ($mode eq "spawn") {
+        open(STDOUT, ">", "/dev/null") or exit 125;
+        open(STDERR, ">", "/dev/null") or exit 125;
+      }
       exec @ARGV;
       exit 125;
     }
+    if ($mode eq "spawn") { print "$pid\n"; exit 0; }
     exit 0 if $mode eq "detach";
     waitpid($pid, 0) == $pid or exit 125;
     my $status = $?;
@@ -963,10 +1027,14 @@ isolate_process() {  # <wait|detach> <command> [argv...]
     perl -e "$program" "$mode" "$@"
     return $?
   fi
+  if [ "$mode" = spawn ]; then
+    perl -e "$program" "$mode" "$@" </dev/null 2>/dev/null
+    return $?
+  fi
   perl -e "$program" "$mode" "$@" >/dev/null 2>&1 &
 }
 
-isolate_runner() {  # <wait|detach> <source-id>
+isolate_runner() {  # <wait|spawn> <source-id>
   isolate_process "$1" "$SCRIPT_DIR/fm-procevent.sh" _start "$2"
 }
 
@@ -1625,8 +1693,10 @@ cmd_owner_watchdog() {  # <source-id> <runner-pid> <runner-identity> <ready-file
 
 # Start a runner outside the watcher cycle that noticed it was missing. The
 # public start boundary establishes its own process group before claiming.
+# Sets DETACHED_RUNNER_PID to the runner's pid, or empty when it is unknown.
 detach_runner() {  # <source-id>
-  isolate_runner detach "$1"
+  DETACHED_RUNNER_PID=$(isolate_runner spawn "$1") || DETACHED_RUNNER_PID=
+  case "$DETACHED_RUNNER_PID" in *[!0-9]*) DETACHED_RUNNER_PID= ;; esac
 }
 
 # Announce a source whose claim no unattended caller may displace, once per
@@ -1817,7 +1887,20 @@ cmd_reconcile() {
           uncertain=$((uncertain + 1))
           report_stranded_source "$id" "$FM_PROCEVENT_CLAIM_TOKEN" \
             "$(stranded_reused_pid_detail "$id")" || true
+        elif [ "$claim_state" -eq 1 ] && launch_still_pending_locked "$id"; then
+          # The runner the previous cycle launched is still alive and has
+          # still not claimed, so it is not merely slow: report the launch
+          # failure now, and start no second runner to queue behind it.
+          launch_identity=$(fm_pr_file_identity "$(source_file "$id")" 2>/dev/null) || launch_identity=
+          failed=$((failed + 1))
+          report_launch_failure "$id" "$launch_identity" || true
         elif [ "$claim_state" -eq 1 ]; then
+          if [ "${LAUNCH_PENDING_DIED:-0}" = 1 ]; then
+            # The previous cycle's runner died before its claim: that launch
+            # failed, and this cycle still launches the source again.
+            failed=$((failed + 1))
+            report_launch_failure "$id" "$(fm_pr_file_identity "$(source_file "$id")" 2>/dev/null)" || true
+          fi
           if ! cleanup_extension_registration_invocations_locked "$id"; then
             uncertain=$((uncertain + 1))
             report_extension_cleanup_failure "$id" || true
@@ -1839,7 +1922,7 @@ cmd_reconcile() {
           fi
           fm_procevent_source_lock_release "$id"
           detach_runner "$id"
-          launched+=("$id"$'\t'"$launch_identity"$'\t'"$launch_mark")
+          launched+=("$id"$'\t'"$launch_identity"$'\t'"$launch_mark"$'\t'"$DETACHED_RUNNER_PID")
           continue
         elif [ "$claim_state" -eq 4 ]; then
           owner=$FM_PROCEVENT_CLAIM_HOME
@@ -1868,7 +1951,7 @@ cmd_reconcile() {
         elif [ "$claim_state" -eq 0 ]; then
           # A live owner is the same evidence confirmation reads, however the
           # runner was started, so it ends any launch-failure episode here.
-          rm -f -- "$(launch_failed_file "$id")"
+          rm -f -- "$(launch_failed_file "$id")" "$(launch_pending_file "$id")"
           rm -f -- "$REG/.$id.cleanup-failed"
         fi
       fi
@@ -1882,12 +1965,18 @@ cmd_reconcile() {
       id=${entry%%$'\t'*}
       launch_identity=${entry#*$'\t'}
       launch_identity=${launch_identity%%$'\t'*}
-      if launch_entry_listed "$entry" "$unconfirmed"; then
+      if ! launch_entry_listed "$entry" "$unconfirmed"; then
+        started=$((started + 1))
+        rm -f -- "$(launch_failed_file "$id")" "$(launch_pending_file "$id")"
+      elif launch_mark=${entry#*$'\t'*$'\t'} \
+        && record_launch_pending "$id" "${entry##*$'\t'}" "$launch_identity" "${launch_mark%%$'\t'*}"; then
+        # Unproved but still running: a runner slowed past the window by load
+        # or lock contention claims a moment later. The cycle cannot settle it,
+        # and the next cycle judges it (see launch_still_pending_locked).
+        uncertain=$((uncertain + 1))
+      else
         failed=$((failed + 1))
         report_launch_failure "$id" "$launch_identity" || true
-      else
-        started=$((started + 1))
-        rm -f -- "$(launch_failed_file "$id")"
       fi
     done
   fi
@@ -1926,7 +2015,7 @@ launch_entry_listed() {  # <entry> <newline-separated entries>
 #
 # Every launch shares ONE window rather than taking a window each, so a whole
 # fleet of failing sources costs a watcher cycle the same bounded wait as one.
-confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><launch-stamp-before>...
+confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><launch-stamp-before><TAB><runner-pid>...
   local deadline window entry id rest identity before state stamp mark
   local -a pending=("$@") remaining=()
   window=$(fm_procevent_launch_confirm_seconds) || return 1
@@ -1946,6 +2035,7 @@ confirm_launched_runners() {  # <source-id><TAB><registration-identity><TAB><lau
       rest=${entry#*$'\t'}
       identity=${rest%%$'\t'*}
       before=${rest#*$'\t'}
+      before=${before%%$'\t'*}
       state=1
       if fm_procevent_source_lock_try_acquire "$id"; then
         fm_procevent_claim_state_locked "$id"
@@ -2288,7 +2378,7 @@ cmd_retire() {
   rm -f -- "$(source_file "$id")"
   rm -f -- "$(runner_file "$id")"
   rm -f -- "$(stranded_file "$id")"
-  rm -f -- "$(launch_failed_file "$id")"
+  rm -f -- "$(launch_failed_file "$id")" "$(launch_pending_file "$id")"
   rm -f -- "$REG/.$id.cleanup-failed"
   rm -f -- "$REG/.$id.reply."*
   fm_procevent_source_lock_release "$id"
