@@ -59,6 +59,11 @@ run_item() {
     "$ITEM" "$RECAP" "$@" > "$OUT" 2> "$ERR" || STATUS=$?
 }
 
+# The read-back after a publish also logs a `read` call, so count publish calls only.
+publish_calls() {
+  grep '^publish ' "$STUB_LOG" || true
+}
+
 field() {  # <jq-path-under-tasks>
   jq -c ".tasks$1" "$RECAP"
 }
@@ -70,7 +75,7 @@ test_a_one_match_edit_replaces_summary_and_emoji_and_publishes_once() {
   assert_equals '"alpha new text"' "$(field .alpha.summary)" "summary is replaced"
   assert_equals '"Z"' "$(field .alpha.emoji)" "emoji is replaced"
   assert_equals '"beta old"' "$(field .beta.summary)" "another item is untouched"
-  assert_equals 'publish '"$RECAP" "$(cat "$STUB_LOG")" "publish ran once on the recap file"
+  assert_equals 'publish '"$RECAP" "$(publish_calls)" "publish ran once on the recap file"
   assert_contains "$(cat "$OUT")" "iteration: 7" "the iteration line is printed"
   assert_contains "$(cat "$OUT")" "url: http://127.0.0.1:1/board" "the other fact lines are printed"
   pass "a one-match edit replaces summary and emoji and publishes once"
@@ -228,6 +233,160 @@ test_link_edits_start_from_the_last_published_links_when_the_file_has_none() {
   pass "link edits start from the last published links when the file has none"
 }
 
+test_key_selects_one_task_when_a_theme_maps_to_several() {
+  new_recap
+  run_item --key 'side:delta' --summary 'delta new' --no-publish
+  expect_code 0 "$STATUS" "edit by key"
+  assert_equals '"delta new"' "$(field '["side:delta"].summary')" "the keyed item is edited"
+  assert_equals '"gamma old"' "$(field .gamma.summary)" "the other item of the same theme is untouched"
+  run_item DP --summary x --no-publish
+  expect_code 1 "$STATUS" "ambiguous theme"
+  assert_contains "$(cat "$ERR")" "--key" "the message points at --key"
+  run_item --key nope --summary x --no-publish
+  expect_code 1 "$STATUS" "unknown key"
+  assert_contains "$(cat "$ERR")" "nope" "the message names the key"
+  run_item LW --key alpha --summary x --no-publish
+  expect_code 2 "$STATUS" "theme and key together"
+  run_item --summary x --no-publish
+  expect_code 2 "$STATUS" "no selector"
+  pass "--key selects one task when a theme maps to several"
+}
+
+test_a_multi_line_summary_comes_from_stdin_or_a_file() {
+  new_recap
+  printf 'line one\nline two\n\nline four\n' | FM_RECAP_PUBLISH_BIN="$STUB" "$ITEM" "$RECAP" LW --summary - --no-publish > "$OUT" 2> "$ERR" \
+    || fail "summary from stdin was refused: $(cat "$ERR")"
+  assert_equals '"line one\nline two\n\nline four"' "$(field .alpha.summary)" "stdin keeps the line breaks"
+  printf 'file one\nfile two\n' > "$TMP_ROOT/summary.txt"
+  run_item PO --summary-file "$TMP_ROOT/summary.txt" --no-publish
+  expect_code 0 "$STATUS" "summary from a file"
+  assert_equals '"file one\nfile two"' "$(field .beta.summary)" "the file keeps the line breaks"
+  run_item PO --summary-file "$TMP_ROOT/missing.txt" --no-publish
+  expect_code 2 "$STATUS" "missing summary file"
+  pass "a multi-line summary comes from stdin or a file"
+}
+
+test_clear_reply_terms_sets_an_empty_list_and_conflicts_with_reply_term() {
+  new_recap
+  run_item LW --clear-reply-terms --no-publish
+  expect_code 0 "$STATUS" "clear"
+  assert_equals '[]' "$(field .alpha.reply_terms)" "the list is empty, not absent"
+  local before
+  before=$(cat "$RECAP")
+  run_item LW --clear-reply-terms --reply-term x --no-publish
+  expect_code 2 "$STATUS" "clear with a term"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged"
+  pass "--clear-reply-terms sets an empty list and conflicts with --reply-term"
+}
+
+test_new_creates_an_item_for_a_bare_id_or_a_home_prefixed_key() {
+  new_recap
+  run_item --new fresh --theme NW --emoji N --summary 'fresh item' --reply-term go --reply-term stop \
+    --add-link 'kind=mr,code=!9,url=https://git.example.test/mr/9' --no-publish
+  expect_code 0 "$STATUS" "new bare key"
+  assert_equals '{"theme":"NW","emoji":"N","summary":"fresh item","reply_terms":["go","stop"],"links":[{"kind":"mr","code":"!9","url":"https://git.example.test/mr/9"}]}' \
+    "$(field .fresh)" "the new item holds exactly the given fields"
+  run_item --new 'side:omega' --theme NW --no-publish
+  expect_code 0 "$STATUS" "new home key"
+  assert_equals '{"theme":"NW"}' "$(field '["side:omega"]')" "an item with only a theme is valid"
+  assert_equals '"alpha old"' "$(field .alpha.summary)" "the other items are untouched"
+  pass "--new creates an item for a bare id or a home-prefixed key"
+}
+
+test_new_refuses_an_existing_key_unless_force_replace_and_checks_its_input() {
+  new_recap
+  local before
+  before=$(cat "$RECAP")
+  run_item --new alpha --theme NW --summary x --no-publish
+  expect_code 1 "$STATUS" "existing key"
+  assert_contains "$(cat "$ERR")" "alpha" "the message names the key"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged"
+  run_item --new alpha --theme NW --summary 'replaced' --force-replace --no-publish
+  expect_code 0 "$STATUS" "force replace"
+  assert_equals '{"theme":"NW","summary":"replaced"}' "$(field .alpha)" "the whole entry is replaced, old fields are gone"
+  new_recap
+  before=$(cat "$RECAP")
+  run_item --new 'a:b:c' --theme NW --no-publish
+  expect_code 2 "$STATUS" "bad key"
+  run_item --new has/slash --theme NW --no-publish
+  expect_code 2 "$STATUS" "key with a slash"
+  run_item --new ok --summary x --no-publish
+  expect_code 2 "$STATUS" "no theme"
+  run_item --new ok --theme 'way-too-long-theme-code' --no-publish
+  expect_code 2 "$STATUS" "theme over 16 characters"
+  run_item --new ok --theme 'bad theme' --no-publish
+  expect_code 2 "$STATUS" "theme with a space"
+  run_item --new ok --theme NW --drop-link X --no-publish
+  expect_code 2 "$STATUS" "drop on a new item"
+  run_item --new ok --theme NW --add-link 'kind=jira,code=X,url=https://a.example.test' --no-publish
+  expect_code 2 "$STATUS" "bad link on a new item"
+  run_item LW --force-replace --summary x --no-publish
+  expect_code 2 "$STATUS" "force-replace without --new"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged after every refusal"
+  pass "--new refuses an existing key unless --force-replace and checks its input"
+}
+
+test_a_new_item_publishes_in_the_same_call() {
+  new_recap
+  run_item --new fresh --theme NW --summary 'fresh item'
+  expect_code 0 "$STATUS" "new and publish"
+  assert_equals 'publish '"$RECAP" "$(publish_calls)" "publish ran once on the recap file"
+  assert_contains "$(cat "$OUT")" "iteration: 7" "the iteration line is printed"
+  assert_contains "$(cat "$OUT")" "changed: LW" "the changed line is printed"
+  pass "a new item publishes in the same call"
+}
+
+test_the_read_back_names_a_key_that_is_not_a_backlog_task_even_when_the_theme_changed() {
+  new_recap
+  local entry
+  entry='[{"seq":7,"tasks":["beta"],"revisions":{"beta":{"theme":"LW"}}}]'
+  STUB_READ=$entry run_item --key alpha --summary s
+  expect_code 0 "$STATUS" "warning case still succeeds"
+  assert_contains "$(cat "$ERR")" "alpha" "the warning names the key"
+  assert_contains "$(cat "$ERR")" "not a task in the backlog" "the warning names the cause"
+  entry='[{"seq":7,"tasks":["alpha","beta"],"revisions":{"beta":{"theme":"LW"}}}]'
+  STUB_READ=$entry run_item --key alpha --summary s
+  assert_contains "$(cat "$ERR")" "no stored field of alpha differs" "a collected task with no change is named"
+  entry='[{"seq":7,"tasks":["alpha"],"revisions":{"alpha":{"theme":"LW"}}}]'
+  STUB_READ=$entry run_item --key alpha --summary s
+  assert_equals "" "$(cat "$ERR")" "no warning when the item has a revision"
+  pass "the read-back names a key that is not a backlog task even when the theme changed"
+}
+
+# The real publish with only its board build stubbed: this is the contract the
+# command depends on, and the reproduction of "changed: -" for an entry whose key
+# is not a backlog task.
+test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not() {
+  local e2e="$TMP_ROOT/e2e" out err status=0
+  mkdir -p "$e2e/home/data" "$e2e/home/config" "$e2e/home/state"
+  cp -R "$ROOT/bin" "$e2e/bin"
+  printf '#!/usr/bin/env bash\nprintf '"'"'session:\\n  url: "http://127.0.0.1:1/stub"\\n'"'"'\n' > "$e2e/bin/fm-bearings-board.sh"
+  chmod +x "$e2e/bin/fm-bearings-board.sh"
+  jq -c -n '{tasks: [{id: "t1", key: "t1", home: "main", kind: "task", repo: "r", state: "open", title: "Task one",
+    held: false, hold_kind: "", hold_until: "", hold_reason: "", blockers: "", pr_url: "", issue_url: "", note: "", waiting: false}],
+    warnings: []}' > "$e2e/home/collect.json"
+  jq -c -n '{schema: "fm-recap.v1", tasks: {}}' > "$e2e/recap.json"
+  e2e_item() {
+    status=0
+    FM_HOME="$e2e/home" FM_RECAP_COLLECT_FILE="$e2e/home/collect.json" "$e2e/bin/fm-recap-item.sh" "$e2e/recap.json" "$@" \
+      > "$e2e/out.txt" 2> "$e2e/err.txt" || status=$?
+    out=$(cat "$e2e/out.txt")
+    err=$(cat "$e2e/err.txt")
+  }
+  e2e_item --new t1 --theme LW --summary 'first'
+  expect_code 0 "$status" "new task item"
+  assert_contains "$out" "changed: LW" "a new item for a backlog task is reported as changed"
+  assert_equals "" "$err" "no warning for a backlog task"
+  e2e_item --key t1 --summary 'a summary-only edit'
+  expect_code 0 "$status" "summary-only edit"
+  assert_contains "$out" "changed: LW" "a summary-only edit of a backlog task is reported as changed"
+  e2e_item --new LW2 --theme LW --summary 'keyed by something that is not a task'
+  expect_code 0 "$status" "non-task key"
+  assert_contains "$out" "changed: -" "publish drops an entry that is not a backlog task"
+  assert_contains "$err" "LW2 is not a task in the backlog" "the command says why"
+  pass "against the real publish a non-task key is reported and a task key is not"
+}
+
 fm_test_run \
   test_a_one_match_edit_replaces_summary_and_emoji_and_publishes_once \
   test_no_match_exits_nonzero_names_the_theme_and_writes_nothing \
@@ -240,4 +399,12 @@ fm_test_run \
   test_no_publish_writes_the_file_and_never_calls_publish \
   test_publish_output_without_an_iteration_line_exits_nonzero \
   test_a_theme_missing_from_the_changed_list_warns_on_stderr \
-  test_link_edits_start_from_the_last_published_links_when_the_file_has_none
+  test_link_edits_start_from_the_last_published_links_when_the_file_has_none \
+  test_key_selects_one_task_when_a_theme_maps_to_several \
+  test_a_multi_line_summary_comes_from_stdin_or_a_file \
+  test_clear_reply_terms_sets_an_empty_list_and_conflicts_with_reply_term \
+  test_new_creates_an_item_for_a_bare_id_or_a_home_prefixed_key \
+  test_new_refuses_an_existing_key_unless_force_replace_and_checks_its_input \
+  test_a_new_item_publishes_in_the_same_call \
+  test_the_read_back_names_a_key_that_is_not_a_backlog_task_even_when_the_theme_changed \
+  test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not

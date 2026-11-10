@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# fm-recap-item.sh - edit one item of an fm-recap.v1 file by its theme, then
-# publish the Fleet Recap board.
+# fm-recap-item.sh - edit or create one item of an fm-recap.v1 file, then publish
+# the Fleet Recap board.
 #
 # The first mate updates the live board by changing one item and publishing. This
 # command is that one step, so a board update is a single reviewed call instead of
@@ -8,42 +8,70 @@
 # bin/fm-recap-publish.sh.
 #
 # Usage:
-#   fm-recap-item.sh <recap.json> <THEME> [--summary <text>] [--emoji <e>]
-#                    [--reply-term <t>]... [--add-link kind=..,code=..,url=..[,text=..]]...
-#                    [--drop-link <code>]... [--no-publish]
+#   fm-recap-item.sh <recap.json> <THEME>      [edit flags]
+#   fm-recap-item.sh <recap.json> --key <key>  [edit flags]
+#   fm-recap-item.sh <recap.json> --new <key> --theme <T> [item flags]
 #
-# <THEME> selects the one item whose "theme" field equals it, wherever that item
-# sits in "tasks". No match or more than one match is an error that names the theme
-# and the matching keys, so an edit never lands on a guessed item.
-#   --summary, --emoji   Replace the field.
-#   --reply-term         Repeatable. Given at least once, it REPLACES the whole
-#                        reply_terms list.
-#   --add-link           Repeatable. kind is ticket, mr, slack, or doc, code is 1 to
+# Selecting the item. Give exactly one of:
+#   <THEME>        The one item whose "theme" field equals it. No match or several
+#                  matches is an error that names the theme and the matching keys,
+#                  so an edit never lands on a guessed item. A theme can map to
+#                  several tasks, and then --key is the way to name one.
+#   --key <key>    The item with that task key: the bare task id for the main home,
+#                  or "<home>:<id>" for a second-mate home. No such item is an error.
+#   --new <key>    Create the item under that key. The key must be a bare task id
+#                  or "<home>:<id>" made of letters, digits, dots, dashes, and
+#                  underscores. --theme is required. An existing key is an error
+#                  unless --force-replace is given, which replaces the whole entry.
+#
+# Edit flags (each is optional, at least one is required for <THEME> and --key):
+#   --theme <T>          Replace the theme (1 to 16 letters, digits, dots, dashes,
+#                        underscores).
+#   --summary <text>     Replace the summary. "-" reads the summary from stdin.
+#   --summary-file <p>   Replace the summary with the contents of a file. Both forms
+#                        keep line breaks, so a multi-line summary is one call.
+#   --emoji <e>          Replace the emoji.
+#   --reply-term <t>     Repeatable. Given at least once, it REPLACES the whole
+#                        reply_terms list. Each term is 1 to 64 characters.
+#   --clear-reply-terms  Set reply_terms to []. It cannot be combined with
+#                        --reply-term.
+#   --add-link kind=..,code=..,url=..[,text=..]
+#                        Repeatable. kind is ticket, mr, slack, or doc, code is 1 to
 #                        64 characters, url is http(s) without spaces, text is
 #                        optional. It replaces an existing link with the same code.
 #                        A comma inside url or text is fine, a key name followed by
 #                        "=" after a comma starts the next field.
-#   --drop-link          Repeatable. Removes the link with that code. A code the
+#   --drop-link <code>   Repeatable. Removes the link with that code. A code the
 #                        item does not have is an error, because it is almost
-#                        always a typo.
+#                        always a typo. Not valid with --new.
+#   --force-replace      Only with --new.
 #   --no-publish         Write the file and stop.
-# At least one edit flag is required. Drops apply before adds, so dropping and
-# adding the same code in one call leaves the added link.
+# Drops apply before adds, so dropping and adding the same code in one call leaves
+# the added link.
 #
 # The file is rewritten through a temp file in the same directory and a rename, so
-# a reader or a crash never sees half a file. Every flag and link is checked
-# before the first write.
+# a reader or a crash never sees half a file. Every flag, key, and link is checked
+# before the first write, and nothing is published after a refusal.
 #
 # Unless --no-publish is given, it runs `fm-recap-publish.sh publish <recap.json>`
 # in the foreground and prints the iteration, changed, waiting, and url lines. The
 # file is already written when publish fails, so a retry is `fm-recap-publish.sh
 # publish <recap.json>`.
 #
+# THE WARNING. publish builds revisions only for entries keyed by a task in the
+# backlog collection and drops any other key without a word, so such an edit reads
+# "changed: -" and the board shows nothing new. After a publish this command reads
+# the new iteration back and warns on stderr, still exiting 0, when the item's key
+# is not a collected task, or when no stored field of the item changed. When the
+# iteration cannot be read back it falls back to warning that the item's theme is
+# missing from the changed list.
+#
 # Exit codes:
 #   0  the edit was written and, unless --no-publish, published with an iteration
-#   1  no or several matching items, an unknown drop code, an unreadable file,
-#      publish failed, or publish printed no "iteration: N" line
-#   2  usage error: unknown flag, missing value, bad link spec, or no edit flag
+#   1  no, several, or an existing matching item, an unknown drop code, an
+#      unreadable file, publish failed, or publish printed no "iteration: N" line
+#   2  usage error: unknown flag, missing value, bad link spec, bad key or theme,
+#      a conflicting flag pair, or no selector or edit flag
 #
 # FM_RECAP_PUBLISH_BIN (tests only) replaces the fm-recap-publish.sh path. It
 # receives `publish <recap.json>` and `read`, and lets a test run with no board.
@@ -52,6 +80,8 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUBLISH="${FM_RECAP_PUBLISH_BIN:-$SCRIPT_DIR/fm-recap-publish.sh}"
 RECAP_SCHEMA=fm-recap.v1
+LINK_KEY_RE='^[A-Za-z0-9._-]+(:[A-Za-z0-9._-]+)?$'
+THEME_RE='^[A-Za-z0-9._-]{1,16}$'
 
 usage() {
   awk '
@@ -66,6 +96,12 @@ fail() {  # <exit-code> <message>
   shift
   printf 'fm-recap-item: %s\n' "$*" >&2
   exit "$code"
+}
+
+# jq counts characters and bash under a C locale counts bytes, so a length limit
+# is measured by jq to agree with validate_recap in fm-recap-publish.sh.
+chars() {  # <text>
+  jq -n --arg v "$1" '$v | length'
 }
 
 # One link spec as a link object, or {err} naming what is wrong. The kind, code,
@@ -91,26 +127,65 @@ case "${1-}" in
 esac
 [ "$#" -ge 2 ] || { usage >&2; exit 2; }
 RECAP=$1
-THEME=$2
-shift 2
+shift
 
+SEL_THEME=''
+SEL_KEY=''
+NEW_KEY=''
 PUBLISH_AFTER=1
+FORCE_REPLACE=0
+CLEAR_TERMS=0
+ADD_TERMS=0
 EDIT='{}'
+
+# The theme selector is positional so the common call stays short. A leading "-"
+# is a flag, which keeps a missing theme from being read as one.
+case "$1" in
+  -*) ;;
+  *) SEL_THEME=$1; shift ;;
+esac
+
 while [ "$#" -gt 0 ]; do
   flag=$1
   case "$flag" in
     --no-publish) PUBLISH_AFTER=0; shift; continue ;;
-    --summary|--emoji|--reply-term|--add-link|--drop-link) ;;
+    --force-replace) FORCE_REPLACE=1; shift; continue ;;
+    --clear-reply-terms)
+      CLEAR_TERMS=1
+      EDIT=$(jq -c '. + {reply_terms: []}' <<< "$EDIT")
+      shift; continue ;;
+    --key|--new|--theme|--summary|--summary-file|--emoji|--reply-term|--add-link|--drop-link) ;;
     *) fail 2 "unknown argument: $flag" ;;
   esac
   [ "$#" -ge 2 ] || fail 2 "$flag needs a value"
   value=$2
   shift 2
   case "$flag" in
-    --summary) EDIT=$(jq -c --arg v "$value" '. + {summary: $v}' <<< "$EDIT") ;;
+    --key)
+      [ -z "$SEL_KEY" ] || fail 2 "--key was given twice"
+      SEL_KEY=$value ;;
+    --new)
+      [ -z "$NEW_KEY" ] || fail 2 "--new was given twice"
+      printf '%s' "$value" | grep -qE "$LINK_KEY_RE" \
+        || fail 2 "--new key \"$value\" must be a task id or <home>:<id> of letters, digits, dots, dashes, and underscores"
+      NEW_KEY=$value ;;
+    --theme)
+      printf '%s' "$value" | grep -qE "$THEME_RE" \
+        || fail 2 "--theme must be 1 to 16 letters, digits, dots, dashes, or underscores"
+      EDIT=$(jq -c --arg v "$value" '. + {theme: $v}' <<< "$EDIT") ;;
+    --summary)
+      # A lone "-" means stdin, the usual convention, so a long summary needs no
+      # shell quoting.
+      [ "$value" != "-" ] || value=$(cat)
+      EDIT=$(jq -c --arg v "$value" '. + {summary: $v}' <<< "$EDIT") ;;
+    --summary-file)
+      [ -f "$value" ] || fail 2 "--summary-file does not exist: $value"
+      value=$(cat -- "$value")
+      EDIT=$(jq -c --arg v "$value" '. + {summary: $v}' <<< "$EDIT") ;;
     --emoji) EDIT=$(jq -c --arg v "$value" '. + {emoji: $v}' <<< "$EDIT") ;;
     --reply-term)
-      [ "${#value}" -ge 1 ] && [ "${#value}" -le 64 ] || fail 2 "--reply-term must be 1 to 64 characters"
+      [ "$(chars "$value")" -ge 1 ] && [ "$(chars "$value")" -le 64 ] || fail 2 "--reply-term must be 1 to 64 characters"
+      ADD_TERMS=1
       EDIT=$(jq -c --arg v "$value" '.reply_terms += [$v]' <<< "$EDIT") ;;
     --drop-link) EDIT=$(jq -c --arg v "$value" '.drop += [$v]' <<< "$EDIT") ;;
     --add-link)
@@ -120,34 +195,62 @@ while [ "$#" -gt 0 ]; do
       EDIT=$(jq -c --argjson l "$link" '.add += [$l]' <<< "$EDIT") ;;
   esac
 done
-[ "$EDIT" != '{}' ] || fail 2 "no edit flag given, nothing to change"
+
+selectors=0
+for s in "$SEL_THEME" "$SEL_KEY" "$NEW_KEY"; do
+  [ -z "$s" ] || selectors=$((selectors + 1))
+done
+[ "$selectors" -eq 1 ] || fail 2 "give exactly one of <THEME>, --key, or --new"
+[ "$CLEAR_TERMS$ADD_TERMS" != 11 ] || fail 2 "--clear-reply-terms cannot be combined with --reply-term"
+if [ -n "$NEW_KEY" ]; then
+  jq -e 'has("theme")' <<< "$EDIT" >/dev/null || fail 2 "--new needs --theme"
+  ! jq -e 'has("drop")' <<< "$EDIT" >/dev/null || fail 2 "--drop-link is not valid with --new"
+else
+  [ "$FORCE_REPLACE" -eq 0 ] || fail 2 "--force-replace is only valid with --new"
+  [ "$EDIT" != '{}' ] || fail 2 "no edit flag given, nothing to change"
+fi
 
 [ -f "$RECAP" ] || fail 1 "recap data does not exist: $RECAP"
 jq -e --arg s "$RECAP_SCHEMA" '.schema == $s and (.tasks | type) == "object"' "$RECAP" >/dev/null 2>&1 \
   || fail 1 "not an $RECAP_SCHEMA file: $RECAP"
 
-keys=$(jq -r --arg t "$THEME" '.tasks | to_entries[]
-  | select((.value | type) == "object" and .value.theme == $t) | .key' "$RECAP")
-matches=$(printf '%s' "$keys" | awk 'NF { n++ } END { print n + 0 }')
-[ "$matches" -ne 0 ] || fail 1 "no item has theme $THEME in $RECAP"
-[ "$matches" -eq 1 ] || fail 1 "$matches items have theme $THEME, expected one: $(printf '%s' "$keys" | paste -sd, -)"
-KEY=$keys
+IS_NEW=0
+if [ -n "$NEW_KEY" ]; then
+  IS_NEW=1
+  KEY=$NEW_KEY
+  if jq -e --arg k "$KEY" '.tasks | has($k)' "$RECAP" >/dev/null && [ "$FORCE_REPLACE" -eq 0 ]; then
+    fail 1 "item $KEY already exists, use --force-replace to replace it"
+  fi
+elif [ -n "$SEL_KEY" ]; then
+  KEY=$SEL_KEY
+  jq -e --arg k "$KEY" '.tasks[$k] | type == "object"' "$RECAP" >/dev/null 2>&1 \
+    || fail 1 "no item has key $KEY in $RECAP"
+else
+  keys=$(jq -r --arg t "$SEL_THEME" '.tasks | to_entries[]
+    | select((.value | type) == "object" and .value.theme == $t) | .key' "$RECAP")
+  matches=$(printf '%s' "$keys" | awk 'NF { n++ } END { print n + 0 }')
+  [ "$matches" -ne 0 ] || fail 1 "no item has theme $SEL_THEME in $RECAP"
+  [ "$matches" -eq 1 ] || fail 1 "$matches items have theme $SEL_THEME, expected one, so pick one with --key: $(printf '%s' "$keys" | paste -sd, -)"
+  KEY=$keys
+fi
 
 # The recap file may omit links while the last published revision holds some, and
 # publish then keeps those. Starting an add or drop from an empty list would wipe
-# them, so seed from the log in that case.
+# them, so seed from the log in that case. A new item has no earlier revision.
 SEED='[]'
-if jq -e '.add or .drop' <<< "$EDIT" >/dev/null \
+if [ "$IS_NEW" -eq 0 ] && jq -e '.add or .drop' <<< "$EDIT" >/dev/null \
    && ! jq -e --arg k "$KEY" '.tasks[$k] | has("links")' "$RECAP" >/dev/null; then
   SEED=$("$PUBLISH" read | jq -c --arg k "$KEY" \
     '[.[] | .revisions[$k]? | select(. != null)] | (last | .links) // []') \
     || fail 1 "cannot read the iteration log for the current links of $KEY"
 fi
 
-missing=$(jq -r --arg k "$KEY" --argjson e "$EDIT" --argjson seed "$SEED" '
-  (.tasks[$k].links // $seed | map(.code)) as $have
-  | ($e.drop // [])[] | select(. as $c | $have | index($c) | not)' "$RECAP")
-[ -z "$missing" ] || fail 1 "item $KEY has no link with code: $(printf '%s' "$missing" | paste -sd, -)"
+if [ "$IS_NEW" -eq 0 ]; then
+  missing=$(jq -r --arg k "$KEY" --argjson e "$EDIT" --argjson seed "$SEED" '
+    (.tasks[$k].links // $seed | map(.code)) as $have
+    | ($e.drop // [])[] | select(. as $c | $have | index($c) | not)' "$RECAP")
+  [ -z "$missing" ] || fail 1 "item $KEY has no link with code: $(printf '%s' "$missing" | paste -sd, -)"
+fi
 
 tmp=$(mktemp "$(dirname "$RECAP")/.$(basename "$RECAP").XXXXXX") || fail 1 "cannot stage the edit"
 trap 'rm -f -- "$tmp"' EXIT
@@ -156,17 +259,20 @@ cp -p "$RECAP" "$tmp"
 # A task's links is stored as [] rather than removed when the last one is dropped,
 # because publish keeps the last revision's links for an omitted field and only an
 # explicit empty list clears them.
-jq --indent 2 --arg k "$KEY" --argjson e "$EDIT" --argjson seed "$SEED" '
-  .tasks[$k] |= (
-    . + ($e | del(.add, .drop))
+jq --indent 2 --arg k "$KEY" --argjson new "$IS_NEW" --argjson e "$EDIT" --argjson seed "$SEED" '
+  .tasks[$k] = (
+    (if $new == 1 then {} else .tasks[$k] end)
+    | . + ($e | del(.add, .drop))
     | if $e.add or $e.drop then
         .links = (
           ((.links // $seed) | map(select(.code as $c | ($e.drop // []) | index($c) | not)))
           | reduce ($e.add // [])[] as $a (.; map(select(.code != $a.code)) + [$a]))
       else . end)' "$RECAP" > "$tmp" || fail 1 "cannot apply the edit to $RECAP"
-jq -e --arg s "$RECAP_SCHEMA" '.schema == $s' "$tmp" >/dev/null || fail 1 "the edit produced an invalid recap file"
+jq -e --arg s "$RECAP_SCHEMA" --arg k "$KEY" '.schema == $s and (.tasks[$k] | type) == "object"' "$tmp" >/dev/null \
+  || fail 1 "the edit produced an invalid recap file"
 mv -f -- "$tmp" "$RECAP"
-printf 'fm-recap-item: edited %s (theme %s)\n' "$KEY" "$THEME"
+THEME=$(jq -r --arg k "$KEY" '.tasks[$k].theme // "misc"' "$RECAP")
+printf 'fm-recap-item: %s %s (theme %s)\n' "$([ "$IS_NEW" -eq 1 ] && echo created || echo edited)" "$KEY" "$THEME"
 
 [ "$PUBLISH_AFTER" -eq 1 ] || exit 0
 
@@ -177,19 +283,26 @@ if [ "$status" -ne 0 ]; then
   fail 1 "publish failed with exit $status after the file was edited"
 fi
 printf '%s\n' "$out" | grep -E '^(iteration|changed|waiting|url): ' || true
-printf '%s\n' "$out" | grep -qE '^iteration: [0-9]+$' || {
+iteration=$(printf '%s\n' "$out" | sed -n 's/^iteration: \([0-9][0-9]*\)$/\1/p' | tail -1)
+[ -n "$iteration" ] || {
   printf '%s\n' "$out" >&2
   fail 1 "publish printed no \"iteration: N\" line"
 }
 
-# publish compares revisions only for tasks that exist in the backlog collection
-# and drops any other key without a word, so an edit to such an item reads
-# "changed: -". Name the cause here, because the board looks published but shows
-# nothing new.
-# ponytail: a change to another item of the same theme hides this, check the
-# log revision for the key if that ever matters.
-changed=$(printf '%s\n' "$out" | sed -n 's/^changed: //p' | tail -1)
-if [ -n "$changed" ] && ! printf ',%s,' "$changed" | grep -qF ",$THEME,"; then
-  printf 'fm-recap-item: warning: theme %s is not in the changed list (%s). Item key %s may not match a backlog task key, and publish ignores such entries.\n' \
-    "$THEME" "$changed" "$KEY" >&2
+# The iteration read back says exactly why the item did not change, which the
+# changed list alone cannot: another item of the same theme can change in the same
+# publish and hide the miss.
+entry=$("$PUBLISH" read 2>/dev/null | jq -c --argjson n "$iteration" '[.[] | select(.seq == $n)] | first // empty' 2>/dev/null || true)
+if [ -n "$entry" ]; then
+  if ! jq -e --arg k "$KEY" '.tasks | index($k)' <<< "$entry" >/dev/null; then
+    printf 'fm-recap-item: warning: item key %s is not a task in the backlog collection, so publish ignored it and the board shows no change.\n' "$KEY" >&2
+  elif ! jq -e --arg k "$KEY" '.revisions | has($k)' <<< "$entry" >/dev/null; then
+    printf 'fm-recap-item: warning: no stored field of %s differs from its last revision, so iteration %s holds no revision for it.\n' "$KEY" "$iteration" >&2
+  fi
+else
+  changed=$(printf '%s\n' "$out" | sed -n 's/^changed: //p' | tail -1)
+  if [ -n "$changed" ] && ! printf ',%s,' "$changed" | grep -qF ",$THEME,"; then
+    printf 'fm-recap-item: warning: theme %s is not in the changed list (%s). Item key %s may not match a backlog task key, and publish ignores such entries.\n' \
+      "$THEME" "$changed" "$KEY" >&2
+  fi
 fi
