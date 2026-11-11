@@ -635,6 +635,112 @@ test_the_captain_can_move_between_iterations() {
   pass "previous and next move between iterations and stop at the ends"
 }
 
+find_chrome() {
+  local candidate
+  if [ -n "${FM_CHROME_BIN:-}" ] && [ -x "$FM_CHROME_BIN" ]; then
+    printf '%s\n' "$FM_CHROME_BIN"
+    return 0
+  fi
+  for candidate in chrome-headless-shell google-chrome google-chrome-stable chromium chromium-browser \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Dump the DOM of a local page at one viewport width, with a private profile and
+# a bounded wait, because headless Chrome can keep running after it has dumped.
+chrome_dump_dom() {  # <chrome> <width> <page> <out>
+  local chrome=$1 width=$2 page=$3 out=$4 profile pid ticks=0
+  profile=$(mktemp -d "$TMP_ROOT/chrome-profile.XXXXXX")
+  : > "$out"
+  HOME="$profile" XDG_CONFIG_HOME="$profile/.config" XDG_CACHE_HOME="$profile/.cache" \
+    "$chrome" --user-data-dir="$profile" --headless=new --disable-gpu --no-sandbox \
+    --disable-dev-shm-usage --disable-background-networking --window-size="$width,600" \
+    --virtual-time-budget=4000 --dump-dom "file://$page" >"$out" 2>"$out.err" &
+  pid=$!
+  while [ "$ticks" -lt 300 ] && ! grep -Fq '</html>' "$out" 2>/dev/null && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  sleep 0.2
+  kill -9 "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  grep -Fq '</html>' "$out"
+}
+
+# Real layout, not the DOM shim: only a browser can say what paints over the chip.
+test_the_nav_never_paints_over_the_first_filter_chip_at_compact_widths() {
+  local home board chrome dir width out line
+  chrome=$(find_chrome) || { echo "skip: no Chrome for the real-layout chip check (set FM_CHROME_BIN)"; return 0; }
+  home=$(make_home chip-layout)
+  seed_views_log "$home"
+  board=$(refresh_board "$home")
+  dir="$TMP_ROOT/chip-layout-page"
+  mkdir -p "$dir"
+  cp "$board" "$dir/page.html"
+  cp "${board%/*}/bearings-board.data.js" "$dir/"
+  # Scroll the list under the nav in 10px steps and record whether an opaque nav
+  # surface is on top at the centre of the first chip's text. The padding gives
+  # a short synthetic list room to scroll.
+  cat > "$dir/probe.js" <<'JS'
+setTimeout(function () {
+  var chip = document.querySelector("#rb-app > div:nth-of-type(1) > button:nth-of-type(1)");
+  var nav = document.querySelector(".rb-nav");
+  var prev = document.querySelector("[data-nav=prev]");
+  document.body.style.paddingBottom = "3000px";
+  // The nav surface is translucent on purpose, so text under blank nav stays
+  // legible. Only an opaque surface inside the nav, such as a button, hides it.
+  function hidesText(el) {
+    for (; el && el !== document.body; el = el.parentElement) {
+      if (!nav.contains(el)) return false;
+      var s = getComputedStyle(el);
+      var m = s.backgroundColor.match(/^rgba?\(([^)]+)\)$/);
+      if (m) {
+        var p = m[1].split(/[\s,\/]+/).filter(Boolean);
+        if (p.length < 4 || Number(p[3]) >= 0.95) return true;
+      }
+    }
+    return false;
+  }
+  var covered = 0;
+  for (var y = 0; y <= 300; y += 10) {
+    scrollTo(0, y);
+    var r = document.createRange();
+    r.selectNodeContents(chip.firstChild);
+    var f = r.getClientRects()[0];
+    var top = document.elementFromPoint(f.left + f.width / 2, f.top + f.height / 2);
+    if (hidesText(top)) covered++;
+  }
+  var pre = document.createElement("pre");
+  pre.id = "probe";
+  pre.textContent = "covered=" + covered + " scrolled=" + Math.round(scrollY) +
+    " wrapped=" + (nav.getBoundingClientRect().height > 70 ? 1 : 0) +
+    " prev_enabled=" + (prev && !prev.disabled ? 1 : 0);
+  document.body.appendChild(pre);
+}, 300);
+JS
+  { sed '$d' "$dir/page.html" | grep -v '^</body>$'; printf '<script src="probe.js"></script>\n</body>\n</html>\n'; } > "$dir/probe.html"
+  for width in 480 600 803 1200; do
+    out="$dir/dom-$width.html"
+    # Headless Chrome start-up fails now and then on a loaded host, so retry.
+    chrome_dump_dom "$chrome" "$width" "$dir/probe.html" "$out" \
+      || chrome_dump_dom "$chrome" "$width" "$dir/probe.html" "$out" \
+      || chrome_dump_dom "$chrome" "$width" "$dir/probe.html" "$out" \
+      || fail "Chrome did not render the board at $width px: $(tail -c 300 "$out.err" | tr '\n' ' ')"
+    line=$(grep -o '<pre id="probe">[^<]*' "$out" | sed 's/<pre id="probe">//')
+    [ -n "$line" ] || fail "the probe left no result at $width px"
+    case "$line" in *"scrolled=300"*"prev_enabled=1"*) ;; *) fail "the probe did not scroll the list or the nav was not live at $width px: $line" ;; esac
+    case "$line" in "covered=0 "*) ;; *) fail "the nav covers the first filter chip at $width px: $line" ;; esac
+    case "$width" in 480|600) case "$line" in *"wrapped=1"*) ;; *) fail "the nav did not wrap at $width px, so the check proves nothing: $line" ;; esac ;; esac
+  done
+  pass "the nav never paints over the first filter chip at compact and wide widths"
+}
+
 test_a_finished_task_stays_three_iterations_then_hides_but_remains_reachable() {
   local home board out i
   home=$(make_home finished
@@ -1984,6 +2090,7 @@ fm_test_run \
   test_rows_and_groups_are_ordered_by_priority_emoji \
   test_the_filters_narrow_the_iteration_view \
   test_the_captain_can_move_between_iterations \
+  test_the_nav_never_paints_over_the_first_filter_chip_at_compact_widths \
   test_a_finished_task_stays_three_iterations_then_hides_but_remains_reachable \
   test_the_task_detail_shows_newest_first_history_with_field_and_note_diffs \
   test_a_task_detail_opens_as_a_panel_over_the_list_without_moving_the_list \
