@@ -774,6 +774,18 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/board-publish-hook/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/board-publish-hook/specs/board-publish-reminder/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/board-publish-hook/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },
