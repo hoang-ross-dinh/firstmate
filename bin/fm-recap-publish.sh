@@ -59,7 +59,7 @@
 #                                "close": "release",
 #                                "on_hold": "waiting: first review feedback",
 #                                "answer": { "to": "<note id>", "text": "..." },
-#                                "links": [{ "kind": "ticket|mr|slack|doc", "code": "ABC-1",
+#                                "links": [{ "kind": "ticket|mr|slack|doc|report", "code": "ABC-1",
 #                                            "url": "https://...", "text": "..." }] } } }
 # A task key is the task id for the main home and "<home>:<id>" for a
 # secondmate home. Every field is optional. A task without an entry, or an entry
@@ -72,12 +72,23 @@
 # mark. Only the first mate sets it, so the backlog does not carry it and an
 # omitted field keeps the last value. A longer string than 200 characters or any
 # non-string value is rejected whole, like any other bad field. links is the list of
-# tickets, merge requests, Slack threads, and documents the board shows as chips on
-# the row and under "Tickets & MRs" in the detail panel: kind is "ticket", "mr",
-# "slack", or "doc", code and an http(s) url are required, text is an optional
-# short title. A publish with any other kind, an empty code, or a url that is not
-# http(s) is rejected whole, like any other bad field, and the board makes no
-# network call for a link. An empty list clears a task's links.
+# tickets, merge requests, Slack threads, documents, and reports the board shows
+# under "References" in the detail panel, and as chips on the row for every kind
+# except report: kind is "ticket", "mr", "slack", "doc", or "report", code and an
+# http(s) url are required, text is an optional short title. A report is a local
+# file path that no browser can open, so its code is the path and its url is
+# optional: absent, the panel shows the path as plain text, and a url that is
+# present must be http(s) like any other. A publish with any other kind, an empty
+# code, or a url that is not http(s) is rejected whole, like any other bad field,
+# and the board makes no network call for a link. An empty list clears a task's
+# links.
+# A summary line of the form "Report: <path>" is lifted out of the summary into a
+# report link with that path as its code, so the first mate can keep writing the
+# line a worker report carries. The line must stand alone, the path must be 64
+# characters or fewer and hold no whitespace, and a path that is already a link
+# code is not added twice. A line that does not meet these rules stays in the
+# summary. The lifted link follows the explicit links and precedes derived ticket
+# chips, and a recap that still carries the line publishes no new revision.
 # A rejected publish prints one line per problem, each naming the task key and the
 # field (a link names its index and sub-field, such as links[1].kind).
 #
@@ -348,11 +359,12 @@ validate_recap() {  # <recap.json>
                | "task \($k): links[\($i)]" as $at
                | if ($l | type) != "object" then "\($at) must be an object"
                  else
-                   (if (["ticket", "mr", "slack", "doc"] | index($l.kind)) then empty
-                    else "\($at).kind must be one of ticket, mr, slack, doc (got \($l.kind | tojson))" end),
+                   (if (["ticket", "mr", "slack", "doc", "report"] | index($l.kind)) then empty
+                    else "\($at).kind must be one of ticket, mr, slack, doc, report (got \($l.kind | tojson))" end),
                    (if ($l.code | isstr and length > 0 and length <= 64) then empty
                     else "\($at).code must be a string of 1 to 64 characters" end),
-                   (if ($l.url | isstr and test("^https?://[^\\s]+$")) then empty
+                   (if $l.kind == "report" and ($l | has("url") | not) then empty
+                    elif ($l.url | isstr and test("^https?://[^\\s]+$")) then empty
                     else "\($at).url must be an http or https URL without spaces" end),
                    (if ($l | has("text") | not) or ($l.text | isstr) then empty
                     else "\($at).text must be a string" end)
@@ -406,6 +418,17 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
             | {kind: "ticket", code: $k, url: ($tpl | split("{key}") | join($k))}
             | select(($k | length) > 0 and ($k | length) <= 64 and (.url | test("^https?://[^\\s]+$")))]
       end;
+    # A "Report: <path>" summary line becomes a report link. A line whose path
+    # cannot be a link code stays in the summary, so nothing is dropped silently.
+    # A summary with no such line is returned untouched, so its trailing
+    # whitespace never makes a revision.
+    def lift($s):
+      ($s | split("\n") | map({line: ., p: ((capture("^Report:\\s*(?<p>\\S+)\\s*$") // {p: null}).p)})) as $m
+      | ($m | map(select(.p != null and (.p | length) <= 64))) as $hit
+      | if ($hit | length) == 0 then {summary: $s, paths: []}
+        else {summary: ($m | map(select((.p != null and (.p | length) <= 64) | not) | .line) | join("\n") | sub("\\s+$"; "")),
+              paths: (reduce $hit[].p as $p ([]; if index($p) then . else . + [$p] end))}
+        end;
     ($entries[0]) as $entries
     | ($collected[0]) as $c
     | ($recap[0].tasks) as $fm
@@ -415,9 +438,10 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
         | . as $t
         | ($last[$t.key] // {}) as $old
         | ($fm[$t.key] // {}) as $mine
+        | lift($mine.summary // $old.summary // "") as $lf
         | ($t | del(.key, .id)) + {id: $t.id}
         + {
-            summary: ($mine.summary // $old.summary // ""),
+            summary: $lf.summary,
             emoji: ($mine.emoji // $old.emoji // ""),
             theme: ($mine.theme // $old.theme // "misc"),
             reply_terms: ($mine.reply_terms // $old.reply_terms // []),
@@ -434,6 +458,7 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
             | if $a != null and {to: $a.to, text: $a.text} != $old.answer
               then {answer: {to: $a.to, text: $a.text}} else {} end)
         + (($mine.links // $old.links // []) as $l
+            | ($l + [$lf.paths[] | select(. as $p | $l | map(.code) | index($p) | not) | {kind: "report", code: .}]) as $l
             | ($l + derived($t.title // ""; [$l[].code])) as $l
             | if ($l | length) > 0 then {links: $l} else {} end)
         | {key: $t.key, value: .}

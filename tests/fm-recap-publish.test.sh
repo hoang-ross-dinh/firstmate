@@ -1583,7 +1583,7 @@ test_a_validation_error_names_the_task_key_and_the_field() {
   write_recap "$home" '{"a":{"links":[{"kind":"slack","code":"ok","url":"https://chat.example.invalid/t/1"},
     {"kind":"epic","code":"X-1","url":"https://example.invalid/a"}],"summary":3}}'
   out=$(publish "$home" 2>&1) && fail "an invalid recap published: $out"
-  printf '%s\n' "$out" | grep -qx 'fm-recap-publish: task a: links\[1\].kind must be one of ticket, mr, slack, doc (got "epic")' \
+  printf '%s\n' "$out" | grep -qx 'fm-recap-publish: task a: links\[1\].kind must be one of ticket, mr, slack, doc, report (got "epic")' \
     || fail "the error did not name the task key, link index, and kind: $out"
   printf '%s\n' "$out" | grep -qx 'fm-recap-publish: task a: summary must be a string' \
     || fail "the error did not name the task key and the summary field: $out"
@@ -1772,7 +1772,7 @@ test_the_ticket_key_warning_uses_the_recap_ticket_setting_only() {
   pass "the ticket key warning uses the recap ticket setting and checks no key without one"
 }
 
-test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
+test_rows_show_link_chips_and_the_panel_shows_a_references_section() {
   local home board out
   home=$(make_home links-render)
   entry 1 '["a","b"]' "{
@@ -1797,8 +1797,8 @@ test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls | test("rb-row$")) | .tag] | all(. == "button")' >/dev/null \
     || fail "a task row stopped being a button"
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
-  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") != null' >/dev/null \
-    || fail "the panel has no Tickets & MRs section"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("References") != null' >/dev/null \
+    || fail "the panel has no References section"
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("Tickets") != null and index("MRs") != null)' >/dev/null \
     || fail "the panel did not show both groups"
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlinkitem") | .text] == ["EXAMPLE-1Synthetic ticket title", "!7001Synthetic MR description", "!7002"]' >/dev/null \
@@ -1806,9 +1806,9 @@ test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section() {
   printf '%s' "$out" | link_anchors | jq -e '[.[] | select(.cls == "")] | length == 3 and all(.[]; .attrs.target == "_blank" and .attrs.rel == "noopener noreferrer")' >/dev/null \
     || fail "a panel link lacked target or rel"
   out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
-  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") == null' >/dev/null \
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("References") == null' >/dev/null \
     || fail "a task without links got the section"
-  pass "rows carry linked chips, the panel has a Tickets & MRs section, and a task without links renders as before"
+  pass "rows carry linked chips, the panel has a References section, and a task without links renders as before"
 }
 
 test_a_task_with_only_one_link_kind_shows_only_that_group() {
@@ -1869,9 +1869,109 @@ test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus() {
   printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the redraw errored: $out"
   printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["EXAMPLE-1", "!7001", "!7002"]' >/dev/null \
     || fail "the chips did not appear after the poll"
-  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Tickets & MRs") != null' >/dev/null \
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("References") != null' >/dev/null \
     || fail "the open panel did not gain the section after the poll"
   pass "links appear after a poll in the row and the open panel, keeping scroll, panel and focus"
+}
+
+# --- report links -------------------------------------------------------------
+
+test_a_report_link_needs_no_url_but_a_given_url_must_be_http() {
+  local home bad
+  home=$(make_home report-link-valid)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" '{"a":{"links":[{"kind":"report","code":"data/synthetic-task/report.md"}]}}'
+  publish "$home" >/dev/null || fail "a report link with no url did not publish"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a.links == [{"kind":"report","code":"data/synthetic-task/report.md"}]' >/dev/null \
+    || fail "the report link was not stored as sent: $(tail -1 "$(log_of "$home")")"
+  home=$(make_home report-link-invalid)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  while IFS= read -r bad; do
+    jq -c -n --argjson l "$bad" '{schema: "fm-recap.v1", tasks: {a: {links: $l}}}' > "$home/recap.json"
+    publish "$home" >/dev/null 2>&1 && fail "a bad report link published: $bad"
+  done <<'JSON'
+[{"kind":"report","code":""}]
+[{"kind":"report"}]
+[{"kind":"report","code":"data/x/report.md","url":"javascript:alert(1)"}]
+[{"kind":"report","code":"data/x/report.md","url":7}]
+[{"kind":"report","code":"data/x/report.md","text":7}]
+JSON
+  [ ! -e "$(log_of "$home")" ] || fail "a bad report link wrote the log"
+  pass "a report link needs no url, and a given url must still be http(s)"
+}
+
+test_a_report_link_shows_as_its_own_references_group_with_no_row_chip() {
+  local home board out
+  home=$(make_home report-link-render)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B")]"
+  write_recap "$home" '{"a":{"links":[
+    {"kind":"mr","code":"!7001","url":"https://example.invalid/mr/7001"},
+    {"kind":"report","code":"data/synthetic-task/report.md"}]},
+    "b":{"links":[{"kind":"report","code":"data/other-task/report.md","url":"https://example.invalid/r/2"}]}}'
+  publish "$home" >/dev/null || fail "publish failed"
+  board=$(refresh_board "$home")
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '.error == ""' >/dev/null || fail "the board errored: $out"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlink") | .text] == ["!7001"]' >/dev/null \
+    || fail "a report became a row chip: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlink") | .text]')"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("References") != null' >/dev/null \
+    || fail "the panel has no References section"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("MRs") != null and index("Reports") != null)' >/dev/null \
+    || fail "the panel did not show the MRs and Reports groups"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-xlinkitem") | .text] | index("data/synthetic-task/report.md") != null' >/dev/null \
+    || fail "the report path is not in the panel: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-xlinkitem") | .text]')"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a" and .text == "data/synthetic-task/report.md")] | length == 0' >/dev/null \
+    || fail "a report with no url became a hyperlink"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"b"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "a" and .text == "data/other-task/report.md" and .attrs.href == "https://example.invalid/r/2")] | length == 1' >/dev/null \
+    || fail "a report with an http url did not become a link"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-row__mark") | .text] | (index("Reports") != null and index("MRs") == null)' >/dev/null \
+    || fail "the panel of a report-only task showed another group"
+  pass "a report link is its own References group, a plain path without a url, and never a row chip"
+}
+
+test_a_report_line_in_the_summary_becomes_a_report_link_and_leaves_the_summary() {
+  local home
+  home=$(make_home report-lift)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B"), $(collected c queued "Task C")]"
+  write_recap "$home" "$(jq -c -n '{
+    a: {summary: "Findings are ready.\nReport: data/synthetic-task/report.md\nNext step is a decision.",
+        links: [{kind: "mr", code: "!7001", url: "https://example.invalid/mr/7001"}]},
+    b: {summary: "Inline mention, Report: data/x/report.md stays put."},
+    c: {summary: ("Trailing line.\nReport: data/" + ("x" * 70) + "/report.md")}}')"
+  publish "$home" >/dev/null || fail "publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '
+    .revisions.a.summary == "Findings are ready.\nNext step is a decision."
+    and ([.revisions.a.links[] | [.kind, .code]] == [["mr","!7001"],["report","data/synthetic-task/report.md"]])
+    and (.revisions.b.summary == "Inline mention, Report: data/x/report.md stays put." and (.revisions.b | has("links") | not))' >/dev/null \
+    || fail "the report line was not lifted from a or was lifted from b: $(tail -1 "$(log_of "$home")")"
+  tail -1 "$(log_of "$home")" | jq -e '(.revisions.c.summary | test("Report: data/")) and (.revisions.c | has("links") | not)' >/dev/null \
+    || fail "a path over 64 characters was lifted instead of kept in the summary"
+  publish "$home" >/dev/null || fail "the republish failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null \
+    || fail "a republish of the same recap made a revision: $(tail -1 "$(log_of "$home")")"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the publish without a recap entry failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null \
+    || fail "a recap without the task made a revision: $(tail -1 "$(log_of "$home")")"
+  pass "a Report: line in the summary becomes a report link, leaves the summary, and republishes without a new revision"
+}
+
+test_a_report_line_does_not_duplicate_an_explicit_report_link_and_goes_before_derived_chips() {
+  local home
+  home=$(ticket_home report-lift-order "$TICKET_URL_TEMPLATE")
+  write_collect "$home" "[$(collected a queued "EXAMPLE-12 Task A"), $(collected b queued "Task B")]"
+  write_recap "$home" '{
+    "a":{"summary":"Body.\nReport: data/synthetic-task/report.md"},
+    "b":{"summary":"Body.\nReport: data/synthetic-task/report.md","links":[{"kind":"report","code":"data/synthetic-task/report.md","text":"Findings"}]}}'
+  publish "$home" >/dev/null || fail "publish failed"
+  tail -1 "$(log_of "$home")" | jq -e '
+    ([.revisions.a.links[].kind] == ["report","ticket"])
+    and (.revisions.b.links == [{"kind":"report","code":"data/synthetic-task/report.md","text":"Findings"}])
+    and (.revisions.b.summary == "Body.")' >/dev/null \
+    || fail "the lifted link was duplicated or misplaced: $(tail -1 "$(log_of "$home")")"
+  pass "a lifted report link is not duplicated when explicit and sits before derived ticket chips"
 }
 
 # --- first mate answers on the board ------------------------------------------
@@ -2285,10 +2385,14 @@ fm_test_run \
   test_republishing_with_derived_chips_makes_no_new_revision \
   test_text_warnings_flag_each_open_task_and_leave_a_clean_one_alone \
   test_the_ticket_key_warning_uses_the_recap_ticket_setting_only \
-  test_rows_show_link_chips_and_the_panel_shows_a_tickets_and_mrs_section \
+  test_rows_show_link_chips_and_the_panel_shows_a_references_section \
   test_a_task_with_only_one_link_kind_shows_only_that_group \
   test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \
   test_links_appear_after_a_poll_without_losing_scroll_panel_or_focus \
+  test_a_report_link_needs_no_url_but_a_given_url_must_be_http \
+  test_a_report_link_shows_as_its_own_references_group_with_no_row_chip \
+  test_a_report_line_in_the_summary_becomes_a_report_link_and_leaves_the_summary \
+  test_a_report_line_does_not_duplicate_an_explicit_report_link_and_goes_before_derived_chips \
   test_an_answer_is_stored_only_on_the_revision_of_the_publish_that_sends_it \
   test_a_bad_answer_publishes_nothing_and_the_size_cap_holds \
   test_an_answer_renders_in_history_linked_to_its_comment_and_once_only \

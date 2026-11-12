@@ -42,9 +42,10 @@
 #   --clear-reply-terms  Set reply_terms to []. It cannot be combined with
 #                        --reply-term.
 #   --add-link kind=..,code=..,url=..[,text=..]
-#                        Repeatable. kind is ticket, mr, slack, or doc, code is 1 to
-#                        64 characters, url is http(s) without spaces, text is
-#                        optional. It replaces an existing link with the same code.
+#                        Repeatable. kind is ticket, mr, slack, doc, or report, code
+#                        is 1 to 64 characters, url is http(s) without spaces, text
+#                        is optional. A report is a file path that has no page, so
+#                        its code is the path and its url may be left out. It replaces an existing link with the same code.
 #                        A comma inside url or text is fine, a key name followed by
 #                        "=" after a comma starts the next field.
 #   --drop-link <code>   Repeatable. Removes the link with that code. A code the
@@ -120,8 +121,9 @@ parse_link() {  # <spec>
     | ($p | map({key: .[0], value: .[1]}) | from_entries) as $l
     | if $back != $s then {err: "must be kind=..,code=..,url=..[,text=..]"}
       elif ($p | map(.[0]) | unique | length) != ($p | length) then {err: "repeats a field"}
-      elif (["ticket", "mr", "slack", "doc"] | index($l.kind)) == null then {err: "kind must be one of ticket, mr, slack, doc"}
+      elif (["ticket", "mr", "slack", "doc", "report"] | index($l.kind)) == null then {err: "kind must be one of ticket, mr, slack, doc, report"}
       elif (($l.code // "") | length) < 1 or ($l.code | length) > 64 then {err: "code must be 1 to 64 characters"}
+      elif ($l.kind == "report" and ($l | has("url") | not)) then $l
       elif ((($l.url // "") | test("^https?://[^\\s]+$")) | not) then {err: "url must be an http or https URL without spaces"}
       else $l end'
 }

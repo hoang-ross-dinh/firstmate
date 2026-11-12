@@ -139,6 +139,26 @@ test_add_link_accepts_slack_and_doc_and_replaces_a_link_with_the_same_code() {
   pass "add-link accepts slack and doc and replaces a link with the same code"
 }
 
+test_add_link_accepts_a_report_path_with_no_url_and_checks_a_given_url() {
+  new_recap
+  run_item LW --no-publish \
+    --add-link 'kind=report,code=data/synthetic-task/report.md' \
+    --add-link 'kind=report,code=data/other-task/report.md,url=https://docs.example.test/r/2,text=Findings'
+  expect_code 0 "$STATUS" "add report links"
+  assert_equals '["ABC-1","data/synthetic-task/report.md","data/other-task/report.md"]' "$(field '.alpha.links | map(.code)')" "both report links are added after the existing link"
+  assert_equals 'false' "$(field '.alpha.links[] | select(.code == "data/synthetic-task/report.md") | has("url")')" "a report path is stored with no url"
+  run_item LW --no-publish --add-link 'kind=report,code=data/synthetic-task/report.md,url=ftp://docs.example.test/r'
+  expect_code 2 "$STATUS" "a report with a non-http url"
+  run_item LW --no-publish --add-link 'kind=report,code=,url=https://docs.example.test/r'
+  expect_code 2 "$STATUS" "a report with an empty code"
+  run_item LW --no-publish --add-link 'kind=ticket,code=X-1'
+  expect_code 2 "$STATUS" "a ticket with no url is still refused"
+  run_item LW --no-publish --drop-link data/synthetic-task/report.md
+  expect_code 0 "$STATUS" "drop a report link by its path"
+  assert_equals '["ABC-1","data/other-task/report.md"]' "$(field '.alpha.links | map(.code)')" "the report path is dropped like any other code"
+  pass "add-link accepts a report path with no url, checks a given url, and drop-link removes it by path"
+}
+
 test_drop_link_removes_by_code_and_an_unknown_code_is_an_error() {
   new_recap
   run_item LW --no-publish --drop-link ABC-1
@@ -456,6 +476,7 @@ fm_test_run \
   test_two_matches_exit_nonzero_name_the_theme_and_both_keys \
   test_reply_terms_given_once_or_more_replace_the_whole_list \
   test_add_link_accepts_slack_and_doc_and_replaces_a_link_with_the_same_code \
+  test_add_link_accepts_a_report_path_with_no_url_and_checks_a_given_url \
   test_drop_link_removes_by_code_and_an_unknown_code_is_an_error \
   test_a_bad_link_spec_or_flag_exits_2_before_anything_is_written \
   test_the_rewrite_keeps_valid_json_the_mode_and_leaves_no_temp_file \
