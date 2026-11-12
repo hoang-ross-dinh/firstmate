@@ -63,10 +63,10 @@ test_an_event_older_than_the_window_blocks() {
   local home
   home=$(make_home)
   status_line "$home" alpha "needs-decision [key=pick] [at=$((P + 60))]: choose one of two synthetic options"
-  run_guard "$home" $((P + 60 + 301))
-  expect_code 2 "$status" "an event 301s old"
+  run_guard "$home" $((P + 60 + 31))
+  expect_code 2 "$status" "an event 31s old"
   assert_contains "$err" "Fleet Recap board is stale: 1 captain-facing second-mate event(s)" "the block names the count"
-  assert_contains "$err" "the oldest from alpha 5 min ago" "the block names the second mate and the age"
+  assert_contains "$err" "the oldest from alpha 31s ago" "the block names the second mate and the age"
   assert_contains "$err" "bin/fm-board-publish-guard.sh ack" "the block names the ack command"
   assert_equals '' "$out" "the block writes nothing on stdout"
   pass "an event older than the window after the last publish blocks"
@@ -76,8 +76,8 @@ test_an_event_inside_the_window_passes_silently() {
   local home
   home=$(make_home)
   status_line "$home" alpha "done [at=$((P + 60))]: synthetic work finished"
-  run_guard "$home" $((P + 60 + 299))
-  expect_silent_pass "an event 299s old"
+  run_guard "$home" $((P + 60 + 29))
+  expect_silent_pass "an event 29s old"
   pass "an event inside the window passes silently"
 }
 
@@ -85,9 +85,9 @@ test_the_oldest_event_sets_the_debounce() {
   local home
   home=$(make_home)
   status_line "$home" alpha "done [at=$((P + 10))]: first synthetic outcome"
-  status_line "$home" alpha "blocked [at=$((P + 280))]: second synthetic outcome"
-  run_guard "$home" $((P + 320))
-  expect_code 2 "$status" "the oldest event is 310s old even though the newest is 40s old"
+  status_line "$home" alpha "blocked [at=$((P + 40))]: second synthetic outcome"
+  run_guard "$home" $((P + 50))
+  expect_code 2 "$status" "the oldest event is 40s old even though the newest is 10s old"
   assert_contains "$err" "2 captain-facing" "both events are counted"
   pass "the oldest unpublished event sets the debounce"
 }
@@ -171,11 +171,12 @@ test_the_window_comes_from_config() {
   expect_silent_pass "a 600s-old event under a 900s window"
   run_guard "$home" $((P + 60 + 900))
   expect_code 2 "$status" "a 900s-old event under a 900s window"
+  assert_contains "$err" "the oldest from alpha 15 min ago" "a long age reads in minutes"
   printf '5 minutes\n' > "$home/config/board-publish-debounce"
   rm -f "$home/state/.board-publish-nagged"
-  run_guard "$home" $((P + 60 + 300))
-  expect_code 2 "$status" "an invalid window falls back to 300s"
-  assert_contains "$err" "config/board-publish-debounce must be whole seconds; using 300" "an invalid window warns"
+  run_guard "$home" $((P + 60 + 30))
+  expect_code 2 "$status" "an invalid window falls back to 30s"
+  assert_contains "$err" "config/board-publish-debounce must be whole seconds; using 30" "an invalid window warns"
   pass "the debounce window comes from config/board-publish-debounce"
 }
 

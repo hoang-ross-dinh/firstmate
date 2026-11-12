@@ -30,9 +30,11 @@
 # $STATE/.board-publish-nagged records the set it last blocked for, and a new
 # event changes the set. Every other case exits 0 with no output.
 #
-# The window is 300 seconds, or the whole number of seconds on the first line
-# of config/board-publish-debounce (docs/configuration.md). An invalid value
-# keeps 300 and prints one stderr warning.
+# The window is DEFAULT_WINDOW (30 seconds), or the whole number of seconds on
+# the first line of config/board-publish-debounce (docs/configuration.md). An
+# invalid value keeps DEFAULT_WINDOW and prints one stderr warning. The default
+# is short because the rule is to publish in the same turn: the window only
+# batches events that land while that turn is still running.
 #
 # SCOPE. It acts only in the main home: a genuine primary checkout
 # (bin/fm-primary-scope-lib.sh) without a secondmate-home marker. A second-mate
@@ -58,7 +60,8 @@ REGISTRY="$DATA/secondmates.md"
 OUTCOMES="$STATE/branch-outcomes.jsonl"
 ACK="$STATE/.board-publish-ack"
 NAGGED="$STATE/.board-publish-nagged"
-DEFAULT_WINDOW=300
+# The single owner of the default debounce window, in seconds.
+DEFAULT_WINDOW=30
 TAIL_LINES=200
 
 NOW=${FM_BOARD_PUBLISH_NOW:-$(date +%s)}
@@ -202,6 +205,8 @@ signature="$newest $count"
 [ "$(cat "$NAGGED" 2>/dev/null)" != "$signature" ] || exit 0
 write_marker "$NAGGED" "$signature" 2>/dev/null || true
 
-printf 'Fleet Recap board is stale: %s captain-facing second-mate event(s) since the last board publish, the oldest from %s %s min ago. Publish the board now (bin/fm-recap-publish.sh publish <recap.json>). If none of them changes the board, run bin/fm-board-publish-guard.sh ack instead.\n' \
-  "$count" "$oldest_id" "$((age / 60))" >&2
+# Seconds read better than "0 min" at the short default window.
+if [ "$age" -lt 120 ]; then age_text="${age}s"; else age_text="$((age / 60)) min"; fi
+printf 'Fleet Recap board is stale: %s captain-facing second-mate event(s) since the last board publish, the oldest from %s %s ago. Publish the board now (bin/fm-recap-publish.sh publish <recap.json>). If none of them changes the board, run bin/fm-board-publish-guard.sh ack instead.\n' \
+  "$count" "$oldest_id" "$age_text" >&2
 exit 2
