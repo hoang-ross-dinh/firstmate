@@ -51,6 +51,17 @@
 #   --drop-link <code>   Repeatable. Removes the link with that code. A code the
 #                        item does not have is an error, because it is almost
 #                        always a typo. Not valid with --new.
+#   --answer-to <id>     The comment note id the answer responds to, 1 to 64
+#                        characters of letters, digits, dots, dashes, underscores.
+#                        Required with --answer-file, the same id fm-inbox.sh reply
+#                        takes.
+#   --answer-file <p>    Set the item's answer to the Markdown in a file, with
+#                        --answer-to. It keeps line breaks. The text must not be
+#                        blank and is at most 20000 characters.
+#   --clear-answer       Remove the item's answer from the file. It cannot be
+#                        combined with --answer-file. Publish sends whatever answer
+#                        the file holds, so clear it once the answer is published.
+#                        An answer already stored stays in the log and History.
 #   --force-replace      Only with --new.
 #   --no-publish         Write the file and stop.
 # Drops apply before adds, so dropping and adding the same code in one call leaves
@@ -78,7 +89,8 @@
 #   1  no, several, or an existing matching item, an unknown drop code, an
 #      unreadable file, publish failed, or publish printed no "iteration: N" line
 #   2  usage error: unknown flag, missing value, bad link spec, bad key or theme,
-#      a conflicting flag pair, or no selector or edit flag
+#      a conflicting flag pair, a bad or half-given answer, or no selector or
+#      edit flag
 #
 # FM_RECAP_PUBLISH_BIN (tests only) replaces the fm-recap-publish.sh path. It
 # receives `publish <recap.json>` and `read`, and lets a test run with no board.
@@ -152,6 +164,10 @@ PUBLISH_AFTER=1
 FORCE_REPLACE=0
 CLEAR_TERMS=0
 ADD_TERMS=0
+CLEAR_ANSWER=0
+ANSWER_TO=''
+ANSWER_TEXT=''
+HAVE_ANSWER=0
 EDIT='{}'
 
 # The theme selector is positional so the common call stays short. A leading "-"
@@ -170,7 +186,10 @@ while [ "$#" -gt 0 ]; do
       CLEAR_TERMS=1
       EDIT=$(jq -c '. + {reply_terms: []}' <<< "$EDIT")
       shift; continue ;;
-    --key|--new|--theme|--summary|--summary-file|--emoji|--reply-term|--add-link|--drop-link) ;;
+    --clear-answer)
+      CLEAR_ANSWER=1
+      shift; continue ;;
+    --key|--new|--theme|--summary|--summary-file|--answer-to|--answer-file|--emoji|--reply-term|--add-link|--drop-link) ;;
     *) fail 2 "unknown argument: $flag" ;;
   esac
   [ "$#" -ge 2 ] || fail 2 "$flag needs a value"
@@ -198,6 +217,14 @@ while [ "$#" -gt 0 ]; do
       [ -f "$value" ] || fail 2 "--summary-file does not exist: $value"
       value=$(cat -- "$value")
       EDIT=$(jq -c --arg v "$value" '. + {summary: $v}' <<< "$EDIT") ;;
+    --answer-to)
+      printf '%s' "$value" | grep -qE '^[A-Za-z0-9._-]{1,64}$' \
+        || fail 2 "--answer-to must be 1 to 64 letters, digits, dots, dashes, or underscores"
+      ANSWER_TO=$value ;;
+    --answer-file)
+      [ -f "$value" ] || fail 2 "--answer-file does not exist: $value"
+      ANSWER_TEXT=$(cat -- "$value")
+      HAVE_ANSWER=1 ;;
     --emoji) EDIT=$(jq -c --arg v "$value" '. + {emoji: $v}' <<< "$EDIT") ;;
     --reply-term)
       [ "$(chars "$value")" -ge 1 ] && [ "$(chars "$value")" -le 64 ] || fail 2 "--reply-term must be 1 to 64 characters"
@@ -218,6 +245,18 @@ for s in "$SEL_THEME" "$SEL_KEY" "$NEW_KEY"; do
 done
 [ "$selectors" -eq 1 ] || fail 2 "give exactly one of <THEME>, --key, or --new"
 [ "$CLEAR_TERMS$ADD_TERMS" != 11 ] || fail 2 "--clear-reply-terms cannot be combined with --reply-term"
+# The answer limits repeat validate_recap in fm-recap-publish.sh on purpose: an
+# answer that passes here must not make the later publish reject the whole recap.
+# The answer is built after the loop because its two flags arrive in either order.
+[ "$CLEAR_ANSWER$HAVE_ANSWER" != 11 ] || fail 2 "--clear-answer cannot be combined with --answer-file"
+[ "$HAVE_ANSWER" -eq 1 ] || [ -z "$ANSWER_TO" ] || fail 2 "--answer-to needs --answer-file"
+if [ "$HAVE_ANSWER" -eq 1 ]; then
+  [ -n "$ANSWER_TO" ] || fail 2 "--answer-file needs --answer-to"
+  printf '%s' "$ANSWER_TEXT" | grep -q '[^[:space:]]' || fail 2 "--answer-file is blank"
+  [ "$(chars "$ANSWER_TEXT")" -le 20000 ] || fail 2 "--answer-file is longer than 20000 characters"
+  EDIT=$(jq -c --arg to "$ANSWER_TO" --arg t "$ANSWER_TEXT" '. + {answer: {to: $to, text: $t}}' <<< "$EDIT")
+fi
+[ "$CLEAR_ANSWER" -eq 0 ] || EDIT=$(jq -c '. + {clear_answer: true}' <<< "$EDIT")
 if [ -n "$NEW_KEY" ]; then
   jq -e 'has("theme")' <<< "$EDIT" >/dev/null || fail 2 "--new needs --theme"
   ! jq -e 'has("drop")' <<< "$EDIT" >/dev/null || fail 2 "--drop-link is not valid with --new"
@@ -281,7 +320,8 @@ cp -p "$RECAP" "$tmp"
 jq --indent 2 --arg k "$KEY" --argjson new "$IS_NEW" --argjson e "$EDIT" --argjson seed "$SEED" '
   .tasks[$k] = (
     (if $new == 1 then {} else .tasks[$k] end)
-    | . + ($e | del(.add, .drop))
+    | . + ($e | del(.add, .drop, .clear_answer))
+    | if $e.clear_answer then del(.answer) else . end
     | if $e.add or $e.drop then
         .links = (
           ((.links // $seed) | map(select(.code as $c | ($e.drop // []) | index($c) | not)))

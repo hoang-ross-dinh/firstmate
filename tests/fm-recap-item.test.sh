@@ -294,6 +294,50 @@ test_a_multi_line_summary_comes_from_stdin_or_a_file() {
   pass "a multi-line summary comes from stdin or a file"
 }
 
+test_answer_file_sets_the_item_answer_and_clear_answer_removes_it() {
+  new_recap
+  printf 'First line\n\n- point one\n- point two\n' > "$TMP_ROOT/answer.md"
+  run_item LW --answer-to note-1 --answer-file "$TMP_ROOT/answer.md"
+  expect_code 0 "$STATUS" "answer from a file"
+  assert_equals '{"to":"note-1","text":"First line\n\n- point one\n- point two"}' "$(field .alpha.answer)" "the answer keeps the line breaks"
+  assert_equals '"alpha old"' "$(field .alpha.summary)" "no other field changes"
+  assert_equals 'publish '"$RECAP" "$(publish_calls)" "publish ran once"
+  run_item LW --clear-answer --no-publish
+  expect_code 0 "$STATUS" "clear the answer"
+  assert_equals 'false' "$(jq -c '.tasks.alpha | has("answer")' "$RECAP")" "the answer field is removed, not emptied"
+  assert_equals '"alpha old"' "$(field .alpha.summary)" "clearing leaves the other fields"
+  run_item PO --clear-answer --no-publish
+  expect_code 0 "$STATUS" "clearing an item with no answer"
+  pass "--answer-file sets the item answer from a file and --clear-answer removes it"
+}
+
+test_a_bad_answer_flag_set_exits_2_before_anything_is_written() {
+  new_recap
+  local before long
+  before=$(cat "$RECAP")
+  printf 'some answer\n' > "$TMP_ROOT/ok.md"
+  printf '  \n\n' > "$TMP_ROOT/blank.md"
+  long="$TMP_ROOT/long.md"
+  head -c 20001 /dev/zero | tr '\\0' x > "$long"
+  run_item LW --answer-file "$TMP_ROOT/ok.md"
+  expect_code 2 "$STATUS" "answer file without --answer-to"
+  run_item LW --answer-to n1
+  expect_code 2 "$STATUS" "--answer-to without an answer file"
+  run_item LW --answer-to 'bad id' --answer-file "$TMP_ROOT/ok.md"
+  expect_code 2 "$STATUS" "a note id with a space"
+  run_item LW --answer-to n1 --answer-file "$TMP_ROOT/missing.md"
+  expect_code 2 "$STATUS" "missing answer file"
+  run_item LW --answer-to n1 --answer-file "$TMP_ROOT/blank.md"
+  expect_code 2 "$STATUS" "blank answer"
+  run_item LW --answer-to n1 --answer-file "$long"
+  expect_code 2 "$STATUS" "answer over 20000 characters"
+  run_item LW --clear-answer --answer-to n1 --answer-file "$TMP_ROOT/ok.md"
+  expect_code 2 "$STATUS" "clear together with a new answer"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged after every refusal"
+  assert_equals "" "$(cat "$STUB_LOG")" "publish never ran"
+  pass "a bad answer flag set exits 2 before anything is written"
+}
+
 test_clear_reply_terms_sets_an_empty_list_and_conflicts_with_reply_term() {
   new_recap
   run_item LW --clear-reply-terms --no-publish
@@ -486,6 +530,8 @@ fm_test_run \
   test_link_edits_start_from_the_last_published_links_when_the_file_has_none \
   test_key_selects_one_task_when_a_theme_maps_to_several \
   test_a_multi_line_summary_comes_from_stdin_or_a_file \
+  test_answer_file_sets_the_item_answer_and_clear_answer_removes_it \
+  test_a_bad_answer_flag_set_exits_2_before_anything_is_written \
   test_clear_reply_terms_sets_an_empty_list_and_conflicts_with_reply_term \
   test_new_creates_an_item_for_a_bare_id_or_a_home_prefixed_key \
   test_new_refuses_an_existing_key_unless_force_replace_and_checks_its_input \
