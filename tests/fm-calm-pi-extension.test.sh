@@ -130,9 +130,13 @@ render_export_dom() {
       Darwin) profile_arg=(--user-data-dir="$profile") ;;
       *) profile_arg=() ;;
     esac
+    # Under a fake HOME, Chrome finds no login keychain and macOS shows a dialog
+    # on every launch. The mock keychain and basic password store stop that lookup.
     HOME="$profile" XDG_CONFIG_HOME="$profile/.config" XDG_CACHE_HOME="$profile/.cache" \
       "$chrome" \
       ${profile_arg[@]+"${profile_arg[@]}"} \
+      --use-mock-keychain \
+      --password-store=basic \
       --headless=new \
       --disable-gpu \
       --no-sandbox \

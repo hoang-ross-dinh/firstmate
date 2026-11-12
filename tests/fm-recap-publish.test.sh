@@ -663,8 +663,11 @@ chrome_dump_dom() {  # <chrome> <width> <page> <out>
   local chrome=$1 width=$2 page=$3 out=$4 profile pid ticks=0
   profile=$(mktemp -d "$TMP_ROOT/chrome-profile.XXXXXX")
   : > "$out"
+  # Under a fake HOME, Chrome finds no login keychain and macOS shows a dialog on
+  # every launch. The mock keychain and basic password store stop that lookup.
   HOME="$profile" XDG_CONFIG_HOME="$profile/.config" XDG_CACHE_HOME="$profile/.cache" \
-    "$chrome" --user-data-dir="$profile" --headless=new --disable-gpu --no-sandbox \
+    "$chrome" --user-data-dir="$profile" --use-mock-keychain --password-store=basic \
+    --headless=new --disable-gpu --no-sandbox \
     --disable-dev-shm-usage --disable-background-networking --window-size="$width,600" \
     --virtual-time-budget=4000 --dump-dom "file://$page" >"$out" 2>"$out.err" &
   pid=$!
