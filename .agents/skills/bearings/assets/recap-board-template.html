@@ -908,13 +908,20 @@ a { color: inherit; text-decoration: none; }
      revision wins and stays until a newer one replaces it, so a publish that omits the answer does
      not clear it. With no answer ever, the newest one-line reply to a comment on the task shows.
      The answer carries no time of its own, so it shows the time of the iteration that stored it,
-     or that iteration's number once the iteration has left the display window. */
+     or that iteration's number once the iteration has left the display window.
+     An answer answers the summary the task had when it was stored. WHY: once a later revision
+     changes the summary the task has moved on, and the old answer would read as current for a
+     topic the item left. So the whole section hides, replies included, because a reply has no
+     clock to compare against the summary and the older reply would be just as stale. Both stay
+     in History and under their comment. Comparing summaries, not iterations, lets a revision that
+     changes only another field keep the answer on screen. */
   function lastResponse(parent, task) {
-    var ans = null, iter = 0, rep = null, i;
+    var ans = null, iter = 0, at = 0, rep = null, i;
     for (i = 0; i < task.revisions.length && !ans; i++) {
       var a = task.revisions[i].answer;
-      if (a && typeof a.to === "string" && typeof a.text === "string") { ans = a; iter = task.revisions[i].iter; }
+      if (a && typeof a.to === "string" && typeof a.text === "string") { ans = a; iter = task.revisions[i].iter; at = i; }
     }
+    if (ans && task.revisions[0].summary !== task.revisions[at].summary) return;
     if (!ans) task.comments.forEach(function (c) {
       if (c.reply && typeof c.reply.text === "string" && c.reply.text
         && (!rep || String(c.reply.at || "") >= String(rep.reply.at || ""))) rep = c;

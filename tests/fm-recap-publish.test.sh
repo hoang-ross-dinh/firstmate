@@ -2191,7 +2191,7 @@ test_the_last_response_keeps_the_answer_after_a_publish_that_omits_it() {
   home=$(make_home last-kept)
   seed_views_log "$home"
   entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'kept answer')")}" >> "$(log_of "$home")"
-  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A later"}')}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A two","note":"later note"}')}" >> "$(log_of "$home")"
   board=$(refresh_board "$home")
   out=$(open_task "$board" a)
   printf '%s' "$out" | last_of | jq -e '.kind == "answer" and (.body | contains("kept answer"))
@@ -2201,6 +2201,42 @@ test_the_last_response_keeps_the_answer_after_a_publish_that_omits_it() {
   printf '%s' "$out" | last_of | jq -e '.kind == "answer"' >/dev/null \
     || fail "viewing an earlier iteration hid the last response"
   pass "the last response keeps the newest answer after a later publish omits it, stamped with the time it was stored"
+}
+
+test_the_last_response_hides_an_answer_the_summary_has_moved_past() {
+  local home board out
+  home=$(make_home last-stale)
+  seed_views_log "$home"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra n1 'answer about the old topic')")}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A new topic"}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  [ "$(printf '%s' "$out" | last_of)" = null ] \
+    || fail "an answer stored against an older summary still shows: $(printf '%s' "$out" | last_of)"
+  printf '%s' "$out" | jq -e "$SEC_DEF"'[sec("History"; "-")[] | select(.cls == "rb-answer") | .text] | length == 1' >/dev/null \
+    || fail "History lost the answer that Last response hid"
+  # The same publish that moves the summary and sends the answer answers the new summary.
+  entry 6 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A third topic","answer":{"to":"n2","text":"fresh answer"}}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  printf '%s' "$out" | last_of | jq -e '.kind == "answer" and .body == "fresh answer"' >/dev/null \
+    || fail "an answer sent with the summary change did not show: $(printf '%s' "$out" | last_of)"
+  pass "the last response hides an answer once the summary changed after it, and shows one sent with the change"
+}
+
+test_a_stale_answer_does_not_fall_back_to_an_older_comment_reply() {
+  local home board out id1
+  home=$(make_home last-stale-reply)
+  seed_views_log "$home"
+  id1=$(home_run "$home" "$ROOT/bin/fm-inbox.sh" note --request-id r1 --json '[recap task=a iteration=3] a comment' | jq -r .id) || fail "note"
+  home_run "$home" "$ROOT/bin/fm-inbox.sh" reply "$id1" 'one-line reply' >/dev/null || fail "reply"
+  entry 4 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" "$(answer_extra "$id1" 'old answer')")}" >> "$(log_of "$home")"
+  entry 5 '["a","b","c"]' "{\"a\": $(rev a in_flight "Task A" '{"theme":"LW","summary":"A new topic"}')}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(open_task "$board" a)
+  [ "$(printf '%s' "$out" | last_of)" = null ] \
+    || fail "a stale answer fell back to an older reply: $(printf '%s' "$out" | last_of)"
+  pass "a stale answer hides the whole Last response section instead of falling back to an older reply"
 }
 
 test_the_last_response_shows_the_iteration_when_the_answer_time_is_out_of_the_window() {
@@ -2402,6 +2438,8 @@ fm_test_run \
   test_the_last_response_section_sits_directly_above_the_comment_section \
   test_the_last_response_section_is_hidden_when_the_task_has_no_answer_and_no_reply \
   test_the_last_response_keeps_the_answer_after_a_publish_that_omits_it \
+  test_the_last_response_hides_an_answer_the_summary_has_moved_past \
+  test_a_stale_answer_does_not_fall_back_to_an_older_comment_reply \
   test_the_last_response_shows_the_iteration_when_the_answer_time_is_out_of_the_window \
   test_the_last_response_falls_back_to_the_newest_reply_only_without_an_answer \
   test_a_newer_answer_replaces_the_older_one_in_the_last_response \
