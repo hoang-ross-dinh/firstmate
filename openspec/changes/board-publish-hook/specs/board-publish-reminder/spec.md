@@ -23,32 +23,32 @@ The hook SHALL read each source only through its last 200 lines and SHALL make n
 
 ### Requirement: Debounced block
 WHEN the oldest counted event is at least the debounce window old, the hook SHALL exit with status 2 and print one stderr message.
-The message SHALL name the event count, the second mate of the oldest event, its age in minutes, the publish command, and the ack command.
+The message SHALL name the event count, the second mate of the oldest event, its age (in seconds under two minutes, otherwise in minutes), the publish command, and the ack command.
 WHILE the oldest counted event is younger than the window, the hook SHALL exit 0 with no output.
 
 #### Scenario: Event older than the window
-- **WHEN** one needs-decision line is 301 seconds old and the window is 300 seconds
+- **WHEN** one needs-decision line is 31 seconds old and the window is 30 seconds
 - **THEN** the hook exits 2 and the message names the count, the second mate, the age, and the ack command
 - Proven by `test_an_event_older_than_the_window_blocks`
 
 #### Scenario: Event inside the window
-- **WHEN** one done line is 299 seconds old and the window is 300 seconds
+- **WHEN** one done line is 29 seconds old and the window is 30 seconds
 - **THEN** the hook exits 0 with no output
 - Proven by `test_an_event_inside_the_window_passes_silently`
 
 #### Scenario: Oldest event decides
-- **WHEN** one event is 310 seconds old and a newer one is 40 seconds old
+- **WHEN** one event is 40 seconds old and a newer one is 10 seconds old
 - **THEN** the hook exits 2 and counts both events
 - Proven by `test_the_oldest_event_sets_the_debounce`
 
 ### Requirement: Debounce window setting
-The debounce window SHALL be 300 seconds by default.
+The debounce window SHALL be 30 seconds by default.
 WHERE `config/board-publish-debounce` exists, the hook SHALL use the whole seconds on its first line as the window.
-IF that first line is not whole seconds, THEN the hook SHALL use 300 seconds and print one stderr warning.
+IF that first line is not whole seconds, THEN the hook SHALL use 30 seconds and print one stderr warning.
 
 #### Scenario: Configured window
 - **WHEN** the file holds 900 and the oldest event is 600 seconds old, and later 900 seconds old
-- **THEN** the hook passes silently the first time and blocks the second time, and an invalid value falls back to 300 seconds with a warning
+- **THEN** the hook passes silently the first time and blocks the second time, and an invalid value falls back to 30 seconds with a warning
 - Proven by `test_the_window_comes_from_config`
 
 ### Requirement: Clearing the reminder

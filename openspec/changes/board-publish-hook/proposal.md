@@ -11,7 +11,7 @@ A written rule in the first mate's memory did not prevent this.
 - The hook blocks the turn end once with a short message when a second mate wrote a captain-facing event after the last board publish and the oldest such event is older than a debounce window.
 - Inside the window the hook stays silent, so events that arrive close together cost one publish.
 - Add `fm-board-publish-guard.sh ack`, which records that the current events need no board change.
-- Add the optional local `config/board-publish-debounce` file for the window, with a default of 300 seconds.
+- Add the optional local `config/board-publish-debounce` file for the window, with a default of 30 seconds, because the rule is to publish in the same turn.
 - Register the hook in the tracked `.claude/settings.json` next to the turn-end guard.
 
 Out of scope: other primary harnesses, events from the main home's own workers, and any change to the publish command or the iteration log.
