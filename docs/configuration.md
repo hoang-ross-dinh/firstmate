@@ -2305,6 +2305,16 @@ When the file is absent, unreadable, or a symlink, nothing is derived.
 When line 1 is not an http(s) URL holding `{key}` without whitespace, or line 2 is not a valid regular expression, the publish warns once on stderr, derives nothing, and still succeeds.
 The file is local to each home and not part of secondmate inherited configuration.
 
+## Fleet Recap publish reminder (config/board-publish-debounce)
+
+In the main home, a Claude Stop hook blocks the turn end once when a second mate reported a captain-facing event after the last Fleet Recap publish and the oldest such event is older than a debounce window.
+`config/board-publish-debounce` is an optional local, gitignored file whose first line is that window in whole seconds, for example `600`.
+When the file is absent, the window is 300 seconds.
+When its first line is not whole seconds, the hook keeps 300 seconds and warns once on stderr.
+A publish clears the reminder, and `bin/fm-board-publish-guard.sh ack` clears it when the events need no board change.
+The file is local to each home and not part of secondmate inherited configuration.
+[`bin/fm-board-publish-guard.sh`](../bin/fm-board-publish-guard.sh) owns which events count, the scope, and the step-aside cases.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.

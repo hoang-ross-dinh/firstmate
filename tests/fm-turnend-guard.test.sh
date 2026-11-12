@@ -890,13 +890,16 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
 # counterpart registration, so guarding it would REMOVE the guard from Grok
 # rather than deduplicate it (docs/subagent-guard.md "Known residual gap").
 # It is asserted to stay unguarded so the exception cannot be closed silently.
+# bin/fm-board-publish-guard.sh has no Grok counterpart either, but it is
+# guarded on purpose: the board reminder is registered for Claude only.
 test_tracked_claude_entries_inert_under_grok() {
   local dir cmd script target guarded=0 unguarded=0
   command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
   dir="$TMP_ROOT/claude-entries-grok-inert"
   mkdir -p "$dir/bin"
   for script in fm-turnend-guard.sh fm-claude-stop-autoarm.sh fm-sessionstart-run.sh \
-    fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh fm-host-mirror.sh; do
+    fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh fm-host-mirror.sh \
+    fm-board-publish-guard.sh; do
     printf '#!/usr/bin/env bash\nprintf ran >> %q\n' "$dir/invoked" > "$dir/bin/$script"
     chmod +x "$dir/bin/$script"
   done
@@ -937,7 +940,7 @@ test_tracked_claude_entries_inert_under_grok() {
       || fail "tracked entry for $target ran under a legacy GROK_AGENT environment"
   done < <(jq -r '.hooks[][].hooks[].command' "$ROOT/.claude/settings.json")
 
-  [ "$guarded" -eq 7 ] || fail "expected 7 grok-guarded tracked entries, saw $guarded"
+  [ "$guarded" -eq 8 ] || fail "expected 8 grok-guarded tracked entries, saw $guarded"
   [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
   pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
 }
