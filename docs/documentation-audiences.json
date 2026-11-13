@@ -738,6 +738,22 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/recap-data-home/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/recap-data-home/specs/recap-item-command/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/recap-data-home/specs/recap-iteration-log/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/recap-data-home/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },
