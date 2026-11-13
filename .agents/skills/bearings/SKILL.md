@@ -98,7 +98,8 @@ Give each task you want to label a one-line `summary`, an `emoji`, a short `them
 Every field is optional and an omitted field keeps its last value.
 Set `on_hold` to a short event text, such as the first review feedback from an outside reviewer, for a task the captain put on hold while it waits for something outside the fleet, and to an empty string once that event arrives; the board badges it "On Hold" apart from in-flight and blocked work.
 Add `links` (ticket and merge request entries with a code, an http(s) url, and optional text) so the board shows them as chips and in the task detail; the publish header owns the field shape.
-Run `bin/fm-recap-publish.sh publish <recap.json>` once per invocation.
+Keep the recap data at the default path `bin/fm-recap-publish.sh recap-path` prints, never under a temp directory; `restore` in the same command rebuilds a lost file from the iteration log.
+Run `bin/fm-recap-publish.sh publish [<recap.json>]` once per invocation.
 Each publish is one iteration.
 Chat then carries one line built from the printed `iteration`, `changed`, `waiting`, and `url` facts, never the digest sections.
 Never write the iteration log or read a backlog file yourself.
