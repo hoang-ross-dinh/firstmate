@@ -8,9 +8,15 @@
 # bin/fm-recap-publish.sh.
 #
 # Usage:
-#   fm-recap-item.sh <recap.json> <THEME>      [edit flags]
-#   fm-recap-item.sh <recap.json> --key <key>  [edit flags]
-#   fm-recap-item.sh <recap.json> --new <key> --theme <T> [item flags]
+#   fm-recap-item.sh [<recap.json>] <THEME>      [edit flags]
+#   fm-recap-item.sh [<recap.json>] --key <key>  [edit flags]
+#   fm-recap-item.sh [<recap.json>] --new <key> --theme <T> [item flags]
+#
+# The recap file. A first argument that holds a slash or ends in ".json" is the
+# recap path and wins. Any other first argument is not a path, so the command uses
+# the default recap file, the one `fm-recap-publish.sh recap-path` prints
+# ($DATA/recap.json in the firstmate home). The default file must exist already:
+# `fm-recap-publish.sh restore` rebuilds it from the iteration log.
 #
 # Selecting the item. Give exactly one of:
 #   <THEME>        The one item whose "theme" field equals it. No match or several
@@ -125,9 +131,17 @@ command -v jq >/dev/null 2>&1 || fail 1 "jq is required"
 case "${1-}" in
   -h|--help|help) usage; exit 0 ;;
 esac
-[ "$#" -ge 2 ] || { usage >&2; exit 2; }
-RECAP=$1
-shift
+[ "$#" -ge 1 ] || { usage >&2; exit 2; }
+# Publish owns the default path so the two commands cannot disagree on it. It is
+# asked only when no path was given, so an explicit call never depends on it.
+DEFAULT_RECAP=0
+case "$1" in
+  */*|*.json) RECAP=$1; shift ;;
+  *)
+    RECAP=$("$PUBLISH" recap-path) || fail 1 "cannot get the default recap path from publish"
+    DEFAULT_RECAP=1 ;;
+esac
+[ "$#" -ge 1 ] || { usage >&2; exit 2; }
 
 SEL_THEME=''
 SEL_KEY=''
@@ -210,7 +224,10 @@ else
   [ "$EDIT" != '{}' ] || fail 2 "no edit flag given, nothing to change"
 fi
 
-[ -f "$RECAP" ] || fail 1 "recap data does not exist: $RECAP"
+if [ ! -f "$RECAP" ]; then
+  [ "$DEFAULT_RECAP" -eq 0 ] || fail 1 "recap data does not exist: $RECAP (rebuild it from the log with: fm-recap-publish.sh restore)"
+  fail 1 "recap data does not exist: $RECAP"
+fi
 jq -e --arg s "$RECAP_SCHEMA" '.schema == $s and (.tasks | type) == "object"' "$RECAP" >/dev/null 2>&1 \
   || fail 1 "not an $RECAP_SCHEMA file: $RECAP"
 

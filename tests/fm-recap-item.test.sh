@@ -22,6 +22,7 @@ cat > "$STUB" <<'SH'
 printf '%s\n' "$*" >> "$STUB_LOG"
 case "${1-}" in
   read) printf '%s\n' "${STUB_READ:-[]}" ;;
+  recap-path) printf '%s\n' "$STUB_RECAP_PATH" ;;
   publish) [ -z "${STUB_OUT-}" ] || printf '%b\n' "$STUB_OUT"; exit "${STUB_EXIT:-0}" ;;
 esac
 SH
@@ -57,6 +58,13 @@ run_item() {
   STATUS=0
   FM_RECAP_PUBLISH_BIN="$STUB" STUB_OUT="${STUB_OUT-$DEFAULT_OUT}" STUB_EXIT="${STUB_EXIT:-0}" \
     "$ITEM" "$RECAP" "$@" > "$OUT" 2> "$ERR" || STATUS=$?
+}
+
+# Like run_item but for a call whose first argument is not the recap path.
+run_item_default() {
+  STATUS=0
+  FM_RECAP_PUBLISH_BIN="$STUB" STUB_OUT="${STUB_OUT-$DEFAULT_OUT}" STUB_EXIT="${STUB_EXIT:-0}" \
+    "$ITEM" "$@" > "$OUT" 2> "$ERR" || STATUS=$?
 }
 
 # The read-back after a publish also logs a `read` call, so count publish calls only.
@@ -353,6 +361,61 @@ test_the_read_back_names_a_key_that_is_not_a_backlog_task_even_when_the_theme_ch
   pass "the read-back names a key that is not a backlog task even when the theme changed"
 }
 
+# With no path the command asks publish for the default recap file, so the two
+# commands never disagree about where the first mate's recap data lives.
+test_no_recap_path_uses_the_default_file_that_publish_names() {
+  local other="$TMP_ROOT/other.json"
+  new_recap
+  export STUB_RECAP_PATH="$RECAP"
+  run_item_default --key alpha --summary 'edited by key'
+  expect_code 0 "$STATUS" "key edit without a path"
+  assert_equals '"edited by key"' "$(field .alpha.summary)" "the default file is edited when the call starts with a flag"
+  assert_equals 'publish '"$RECAP" "$(publish_calls)" "publish runs on the default file"
+  new_recap
+  run_item_default LW --summary 'edited by theme'
+  expect_code 0 "$STATUS" "theme edit without a path"
+  assert_equals '"edited by theme"' "$(field .alpha.summary)" "a first argument that is not a path selects by theme"
+  new_recap
+  cp "$RECAP" "$other"
+  run_item_default "$other" LW --summary 'edited by path'
+  expect_code 0 "$STATUS" "edit with an explicit path"
+  assert_equals '"edited by path"' "$(jq -c .tasks.alpha.summary "$other")" "an explicit path wins over the default"
+  assert_equals '"alpha old"' "$(field .alpha.summary)" "the default file is left alone when a path is given"
+  run_item_default recap.json LW --summary 'x'
+  assert_contains "$(cat "$ERR")" "recap data does not exist: recap.json" "a bare name ending in .json is a path"
+  unset STUB_RECAP_PATH
+  pass "no recap path uses the default file that publish names, and an explicit path wins"
+}
+
+test_a_missing_default_file_names_the_path_and_the_restore_command() {
+  export STUB_RECAP_PATH="$TMP_ROOT/absent-default.json"
+  rm -f -- "$STUB_RECAP_PATH"
+  run_item_default --new k --theme LW --summary 's'
+  expect_code 1 "$STATUS" "missing default file"
+  assert_contains "$(cat "$ERR")" "$STUB_RECAP_PATH" "the error names the default path"
+  assert_contains "$(cat "$ERR")" "fm-recap-publish.sh restore" "the error names the restore command"
+  [ ! -e "$STUB_RECAP_PATH" ] || fail "a refused call created the default file"
+  unset STUB_RECAP_PATH
+  pass "a missing default file names the path and the restore command"
+}
+
+test_against_the_real_publish_the_default_file_is_the_one_publish_reads() {
+  local e2e="$TMP_ROOT/e2e-default" out
+  mkdir -p "$e2e/home/data" "$e2e/home/config" "$e2e/home/state"
+  cp -R "$ROOT/bin" "$e2e/bin"
+  printf '#!/usr/bin/env bash\nprintf '"'"'session:\\n  url: "http://127.0.0.1:1/stub"\\n'"'"'\n' > "$e2e/bin/fm-bearings-board.sh"
+  chmod +x "$e2e/bin/fm-bearings-board.sh"
+  jq -c -n '{tasks: [{id: "t1", key: "t1", home: "main", kind: "task", repo: "r", state: "open", title: "Task one",
+    held: false, hold_kind: "", hold_until: "", hold_reason: "", blockers: "", pr_url: "", issue_url: "", note: "", waiting: false}],
+    warnings: []}' > "$e2e/home/collect.json"
+  jq -c -n '{schema: "fm-recap.v1", tasks: {}}' > "$e2e/home/data/recap.json"
+  out=$(FM_HOME="$e2e/home" FM_RECAP_COLLECT_FILE="$e2e/home/collect.json" "$e2e/bin/fm-recap-item.sh" \
+    --new t1 --theme LW --summary 'first' 2>&1) || fail "item without a path failed: $out"
+  assert_contains "$out" "changed: LW" "the edit of the default file reaches the board"
+  assert_equals '"first"' "$(jq -c .tasks.t1.summary "$e2e/home/data/recap.json")" "the home data file holds the edit"
+  pass "against the real publish the default file is the one publish reads"
+}
+
 # The real publish with only its board build stubbed: this is the contract the
 # command depends on, and the reproduction of "changed: -" for an entry whose key
 # is not a backlog task.
@@ -407,4 +470,7 @@ fm_test_run \
   test_new_refuses_an_existing_key_unless_force_replace_and_checks_its_input \
   test_a_new_item_publishes_in_the_same_call \
   test_the_read_back_names_a_key_that_is_not_a_backlog_task_even_when_the_theme_changed \
+  test_no_recap_path_uses_the_default_file_that_publish_names \
+  test_a_missing_default_file_names_the_path_and_the_restore_command \
+  test_against_the_real_publish_the_default_file_is_the_one_publish_reads \
   test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not
