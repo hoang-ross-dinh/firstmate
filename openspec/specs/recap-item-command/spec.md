@@ -37,7 +37,7 @@ IF the command receives `--clear-reply-terms` together with `--reply-term`, THEN
 WHEN the command receives `--add-link`, it SHALL add the link and replace any link with the same code.
 WHEN the command receives `--drop-link`, it SHALL remove the link with that code.
 IF a dropped code does not exist on the item, THEN the command SHALL exit with status 1 and write nothing.
-Link kinds SHALL be ticket, mr, slack, or doc, and a url SHALL be http or https without spaces, the same rules the publish command applies.
+Link kinds SHALL be ticket, mr, slack, doc, or report, and a url SHALL be http or https without spaces, the same rules the publish command applies, except that a report MAY omit the url.
 
 #### Scenario: Reply terms replace
 - **WHEN** an item has two reply terms and the command receives two other `--reply-term` values
@@ -63,6 +63,11 @@ Link kinds SHALL be ticket, mr, slack, or doc, and a url SHALL be http or https 
 - **WHEN** the item has no links field and the last published revision holds links
 - **THEN** an add or drop starts from the published links so a publish does not lose them
 - Proven by `test_link_edits_start_from_the_last_published_links_when_the_file_has_none`
+
+#### Scenario: Add a report path
+- **WHEN** the command adds a report link whose code is a file path and that has no url, then adds a report link with a non-http url
+- **THEN** the first link is stored with no url and the second call exits with status 2 with the file unchanged
+- Proven by `test_add_link_accepts_a_report_path_with_no_url_and_checks_a_given_url`
 
 ### Requirement: Multi-line summary
 WHEN the command receives `--summary -`, it SHALL read the summary from standard input.

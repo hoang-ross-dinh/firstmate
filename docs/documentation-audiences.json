@@ -754,6 +754,22 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/archive/2026-11-13-board-references-section/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-13-board-references-section/specs/recap-board-links/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-13-board-references-section/specs/recap-item-command/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-13-board-references-section/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "openspec/specs/recap-item-command/spec.md",
       "audience": "maintainer-architecture"
     },
