@@ -420,6 +420,140 @@ test_an_invalid_recap_publishes_nothing() {
   pass "an invalid recap refuses and writes nothing"
 }
 
+# --- durable recap data -----------------------------------------------------
+
+test_the_recap_file_defaults_to_the_gitignored_home_data_dir() {
+  local home
+  home=$(make_home recap-default)
+  [ "$(home_run "$home" "$PUBLISH" recap-path)" = "$home/data/recap.json" ] \
+    || fail "the default recap path is not under the home's data directory"
+  # Without the data override the path still follows FM_HOME, which a secondmate home relies on.
+  [ "$(env -u FM_DATA_OVERRIDE FM_HOME="$home" "$PUBLISH" recap-path)" = "$home/data/recap.json" ] \
+    || fail "the default recap path does not follow FM_HOME"
+  git -C "$ROOT" check-ignore -q data/recap.json || fail "the default recap path is not gitignored"
+  pass "the recap file defaults to the gitignored data directory of the home"
+}
+
+test_publish_without_a_path_reads_the_default_recap_and_an_explicit_path_wins() {
+  local home out
+  home=$(make_home publish-default)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  jq -c -n '{schema: "fm-recap.v1", tasks: {a: {summary: "from default", theme: "DF"}}}' > "$home/data/recap.json"
+  jq -c -n '{schema: "fm-recap.v1", tasks: {a: {summary: "from explicit", theme: "EX"}}}' > "$home/explicit.json"
+  out=$(home_run "$home" "$PUBLISH" publish) || fail "publish without a path failed"
+  assert_contains "$out" "iteration: 1" "publish without a path appends an iteration"
+  assert_equals '"from default"' "$(home_run "$home" "$PUBLISH" read | jq -c '.[-1].revisions.a.summary')" \
+    "publish without a path reads the default recap file"
+  out=$(home_run "$home" "$PUBLISH" publish "$home/explicit.json") || fail "publish with a path failed"
+  assert_contains "$out" "iteration: 2" "publish with a path appends the next iteration"
+  assert_equals '"from explicit"' "$(home_run "$home" "$PUBLISH" read | jq -c '.[-1].revisions.a.summary')" \
+    "an explicit path wins over the default"
+  pass "publish without a path reads the default recap and an explicit path wins"
+}
+
+test_publish_without_a_path_and_no_default_file_names_the_path_and_restore() {
+  local home err status=0
+  home=$(make_home publish-missing)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  err=$(home_run "$home" "$PUBLISH" publish 2>&1 >/dev/null) || status=$?
+  [ "$status" -ne 0 ] || fail "publish with no recap file succeeded"
+  assert_contains "$err" "$home/data/recap.json" "the error names the default path"
+  assert_contains "$err" "restore" "the error points at the restore command"
+  [ ! -e "$(log_of "$home")" ] || fail "a missing recap file wrote the log"
+  pass "publish without a path and without a default file names the path and restore"
+}
+
+# A two-iteration log where task a changed in iteration 2 and task z left the
+# backlog, so a restore has to take the last revision per key and drop z.
+write_restorable_log() {  # <home>
+  local links='[{"kind":"ticket","code":"ABC-1","url":"https://tracker.example.test/ABC-1"}]'
+  local a1 b1 z1 a2 revs1 revs2
+  a1=$(rev a queued "Task A" '{"summary":"first","theme":"LW"}')
+  b1=$(rev b queued "Task B" '{"summary":"b first","theme":"ZZ"}')
+  z1=$(rev z queued "Task Z" '{"summary":"gone","theme":"GO"}')
+  a2=$(rev a queued "Task A" "$(jq -c -n --argjson links "$links" '
+    {summary: "second", theme: "LW", emoji: "E", reply_terms: ["merge"], close: "release",
+     on_hold: "waiting: review", links: $links, answer: {to: "n1", text: "old answer"}}')")
+  revs1=$(jq -c -n --argjson a "$a1" --argjson b "$b1" --argjson z "$z1" '{a: $a, b: $b, z: $z}')
+  revs2=$(jq -c -n --argjson a "$a2" '{a: $a}')
+  {
+    entry 1 '["a","b","z"]' "$revs1"
+    entry 2 '["a","b"]' "$revs2"
+  } > "$(log_of "$1")"
+}
+
+test_restore_rebuilds_the_recap_from_the_last_revision_of_each_current_task() {
+  local home out
+  home=$(make_home restore-rebuild)
+  write_restorable_log "$home"
+  out=$(home_run "$home" "$PUBLISH" restore) || fail "restore failed: $out"
+  assert_contains "$out" "$home/data/recap.json" "restore says where it wrote"
+  jq -e '.schema == "fm-recap.v1"' "$home/data/recap.json" >/dev/null || fail "the restored file has the wrong schema"
+  assert_equals '{"a":{"close":"release","emoji":"E","links":[{"code":"ABC-1","kind":"ticket","url":"https://tracker.example.test/ABC-1"}],"on_hold":"waiting: review","reply_terms":["merge"],"summary":"second","theme":"LW"},"b":{"emoji":"","reply_terms":[],"summary":"b first","theme":"ZZ"}}' \
+    "$(jq -S -c .tasks "$home/data/recap.json")" \
+    "restore keeps the first mate fields of each current task from its last revision, without backlog fields, answers, or tasks that left the backlog"
+  pass "restore rebuilds the recap from the last revision of each current task"
+}
+
+test_a_restored_recap_publishes_with_no_change() {
+  local home out
+  home=$(make_home restore-roundtrip)
+  write_restorable_log "$home"
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B")]"
+  home_run "$home" "$PUBLISH" restore >/dev/null || fail "restore failed"
+  out=$(home_run "$home" "$PUBLISH" publish) || fail "publishing the restored recap failed"
+  assert_contains "$out" "iteration: 3" "the restored recap publishes the next iteration"
+  assert_contains "$out" "changed: -" "the restored recap changes no task"
+  pass "a restored recap publishes with no change"
+}
+
+test_restore_refuses_to_overwrite_a_non_empty_recap_unless_forced() {
+  local home err status=0 before
+  home=$(make_home restore-overwrite)
+  write_restorable_log "$home"
+  jq -c -n '{schema: "fm-recap.v1", tasks: {keep: {summary: "unpublished edit"}}}' > "$home/data/recap.json"
+  before=$(cat "$home/data/recap.json")
+  err=$(home_run "$home" "$PUBLISH" restore 2>&1 >/dev/null) || status=$?
+  [ "$status" -ne 0 ] || fail "restore overwrote a non-empty recap file"
+  assert_contains "$err" "--force" "the refusal names the flag"
+  assert_equals "$before" "$(cat "$home/data/recap.json")" "a refused restore leaves the file unchanged"
+  home_run "$home" "$PUBLISH" restore --force >/dev/null || fail "restore --force failed"
+  jq -e '.tasks | has("a") and (has("keep") | not)' "$home/data/recap.json" >/dev/null \
+    || fail "restore --force did not replace the file"
+  : > "$home/data/recap.json"
+  home_run "$home" "$PUBLISH" restore >/dev/null || fail "restore refused to fill an empty file"
+  jq -e '.tasks | has("a")' "$home/data/recap.json" >/dev/null || fail "restore left an empty file empty"
+  pass "restore refuses to overwrite a non-empty recap unless forced"
+}
+
+test_restore_takes_an_explicit_path_and_a_log_with_no_iteration_is_an_error() {
+  local home status=0
+  home=$(make_home restore-path)
+  home_run "$home" "$PUBLISH" restore >/dev/null 2>&1 && fail "restore from a missing log succeeded"
+  : > "$(log_of "$home")"
+  home_run "$home" "$PUBLISH" restore >/dev/null 2>&1 && fail "restore from an empty log succeeded"
+  [ ! -e "$home/data/recap.json" ] || fail "a failed restore wrote the recap file"
+  write_restorable_log "$home"
+  # A torn last line is skipped by the log reader, so it must not stop a restore.
+  printf '{"schema":"fm-recap-iteration.v1","seq":3,' >> "$(log_of "$home")"
+  home_run "$home" "$PUBLISH" restore "$home/elsewhere.json" >/dev/null 2>&1 || status=$?
+  expect_code 0 "$status" "restore to an explicit path"
+  jq -e '.tasks | has("a")' "$home/elsewhere.json" >/dev/null || fail "the explicit path did not receive the recap"
+  [ ! -e "$home/data/recap.json" ] || fail "restore with a path also wrote the default file"
+  pass "restore takes an explicit path and refuses a log with no iteration"
+}
+
+test_restore_never_touches_the_log_or_the_board() {
+  local home before
+  home=$(make_home restore-readonly)
+  write_restorable_log "$home"
+  before=$(cat "$(log_of "$home")")
+  home_run "$home" "$PUBLISH" restore >/dev/null || fail "restore failed"
+  assert_equals "$before" "$(cat "$(log_of "$home")")" "the log is byte-identical after a restore"
+  [ ! -e "$home/lavish-calls" ] || fail "restore built the board"
+  pass "restore never touches the log or the board"
+}
+
 # --- board views ------------------------------------------------------------
 
 test_the_display_window_keeps_the_last_30_iterations_and_every_revision_full() {
@@ -2089,6 +2223,14 @@ fm_test_run \
   test_a_torn_last_line_is_skipped_reported_and_never_rewritten \
   test_the_log_lives_in_gitignored_data \
   test_an_invalid_recap_publishes_nothing \
+  test_the_recap_file_defaults_to_the_gitignored_home_data_dir \
+  test_publish_without_a_path_reads_the_default_recap_and_an_explicit_path_wins \
+  test_publish_without_a_path_and_no_default_file_names_the_path_and_restore \
+  test_restore_rebuilds_the_recap_from_the_last_revision_of_each_current_task \
+  test_a_restored_recap_publishes_with_no_change \
+  test_restore_refuses_to_overwrite_a_non_empty_recap_unless_forced \
+  test_restore_takes_an_explicit_path_and_a_log_with_no_iteration_is_an_error \
+  test_restore_never_touches_the_log_or_the_board \
   test_the_display_window_keeps_the_last_30_iterations_and_every_revision_full \
   test_a_publish_never_asks_lavish_to_open_a_browser_tab \
   test_a_live_session_listed_with_unread_prompts_is_not_reopened \

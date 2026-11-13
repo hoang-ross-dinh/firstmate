@@ -13,10 +13,12 @@
 # keeps its refusal.
 #
 # Usage:
-#   fm-recap-publish.sh publish <recap.json>
+#   fm-recap-publish.sh publish [<recap.json>]
 #   fm-recap-publish.sh refresh
 #   fm-recap-publish.sh read
 #   fm-recap-publish.sh path
+#   fm-recap-publish.sh recap-path
+#   fm-recap-publish.sh restore [<recap.json>] [--force]
 #
 # publish   Append exactly one iteration to the log, then build the board
 #           through `fm-bearings-board.sh build`, which owns the Lavish session
@@ -31,6 +33,24 @@
 # read      Print the readable log entries as one JSON array. An unreadable
 #           line is skipped and reported on stderr, never rewritten.
 # path      Print the iteration log path.
+# recap-path
+#           Print the default recap path, $DATA/recap.json.
+# restore   Rebuild the recap file from the iteration log and print where it was
+#           written. It never appends an iteration and never builds the board.
+#           See THE RECAP FILE below.
+#
+# THE RECAP FILE. <recap.json> is optional for publish. Without it, publish reads
+# $DATA/recap.json, the gitignored data/ directory of the firstmate home, which
+# survives a reboot where a file under /tmp does not. An explicit path wins, and
+# bin/fm-recap-item.sh uses the same default. restore writes the recap file from
+# the log: for each task in the newest iteration it takes the last stored revision
+# and keeps the first mate fields of that revision (summary, emoji, theme,
+# reply_terms, close, on_hold, links). It refuses to replace a non-empty file
+# unless --force is given, because that file may hold edits not yet published.
+# The log cannot give back an answer, which a revision keeps only for its own
+# publish, a recap entry for a key that never was a backlog task, or the line
+# between an explicit link and a ticket chip that publish derived from a title.
+# A derived chip comes back as an explicit link, which publish treats the same.
 #
 # <recap.json> is fm-recap.v1, composed by the first mate:
 #   { "schema": "fm-recap.v1",
@@ -122,6 +142,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 LOG="$DATA/recap-iterations.jsonl"
 LOG_LOCK="$DATA/.recap-iterations.lock"
+# The recap file sits beside the log so one backup or one wipe covers both.
+RECAP_DEFAULT="$DATA/recap.json"
 
 ITERATION_SCHEMA=fm-recap-iteration.v1
 RECAP_SCHEMA=fm-recap.v1
@@ -522,10 +544,10 @@ run_build() {  # <board.json>
 }
 
 command_publish() {
-  local recap=${1-} work entries collected entry board out iteration themes waiting url
-  [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+  local recap=${1:-$RECAP_DEFAULT} work entries collected entry board out iteration themes waiting url
+  [ "$#" -le 1 ] || { usage >&2; exit 2; }
   command -v jq >/dev/null 2>&1 || fail "jq is required"
-  [ -f "$recap" ] || fail "recap data does not exist: $recap"
+  [ -f "$recap" ] || fail "recap data does not exist: $recap (rebuild it from the log with: fm-recap-publish.sh restore)"
   jq empty "$recap" 2>/dev/null || fail "recap data is not valid JSON: $recap"
   validate_recap "$recap" || fail "recap data does not satisfy $RECAP_SCHEMA: $recap"
   mkdir -p "$DATA"
@@ -570,11 +592,58 @@ command_refresh() {
   printf 'iteration: %s\nurl: %s\n' "$entries" "$(printf '%s\n' "$out" | tail -1)"
 }
 
+# Rebuild the recap file from the log. The newest iteration names the tasks still
+# on the board, and the last revision of each holds the first mate fields, so a
+# replay is one pass that keeps the latest revision per key.
+command_restore() {
+  local recap=$RECAP_DEFAULT force=0 arg work tmp count seq
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      -*) usage >&2; exit 2 ;;
+      *) [ "$recap" = "$RECAP_DEFAULT" ] || { usage >&2; exit 2; }; recap=$arg ;;
+    esac
+  done
+  command -v jq >/dev/null 2>&1 || fail "jq is required"
+  if [ -s "$recap" ] && [ "$force" -eq 0 ]; then
+    fail "$recap is not empty, so restore left it alone. Pass --force to replace it"
+  fi
+  work=$(mktemp -d "${TMPDIR:-/tmp}/fm-recap-publish.XXXXXX") || fail "cannot stage the restore"
+  read_log > "$work/entries.json" || { rm -rf -- "$work"; fail "cannot read the iteration log"; }
+  [ "$(jq length "$work/entries.json")" -gt 0 ] \
+    || { rm -rf -- "$work"; fail "the iteration log holds no iteration to restore from: $LOG"; }
+  jq --indent 2 --arg schema "$RECAP_SCHEMA" '
+    (last | .tasks) as $present
+    | (reduce (.[] | .revisions | to_entries[]) as $r ({}; .[$r.key] = $r.value)) as $last
+    | {schema: $schema,
+       tasks: ([$present[] | . as $k | $last[$k] | select(. != null)
+         | {key: $k, value: ({summary: (.summary // ""), emoji: (.emoji // ""), theme: (.theme // "misc"),
+                              reply_terms: (.reply_terms // [])}
+             + (if (.close // "") != "" then {close} else {} end)
+             + (if (.on_hold // "") != "" then {on_hold} else {} end)
+             + (if (.links // []) | length > 0 then {links} else {} end))}]
+         | from_entries)}' "$work/entries.json" > "$work/recap.json" \
+    || { rm -rf -- "$work"; fail "cannot rebuild the recap from the log"; }
+  # The file is checked as publish will check it, so a restored file never fails the next publish.
+  validate_recap "$work/recap.json" || { rm -rf -- "$work"; fail "the restored recap does not satisfy $RECAP_SCHEMA"; }
+  mkdir -p "$(dirname "$recap")"
+  # Same directory as the target so the rename is atomic and a crash leaves no half file.
+  tmp=$(mktemp "$(dirname "$recap")/.$(basename "$recap").XXXXXX") || { rm -rf -- "$work"; fail "cannot stage $recap"; }
+  cp -- "$work/recap.json" "$tmp" && mv -f -- "$tmp" "$recap" \
+    || { rm -f -- "$tmp"; rm -rf -- "$work"; fail "cannot write $recap"; }
+  count=$(jq '.tasks | length' "$recap")
+  seq=$(jq 'last | .seq' "$work/entries.json")
+  rm -rf -- "$work"
+  printf 'restored %s task(s) from iteration %s into %s\n' "$count" "$seq" "$recap"
+}
+
 case "${1-}" in
   publish) shift; command_publish "$@" ;;
   refresh) shift; command_refresh ;;
   read) read_log ;;
   path) printf '%s\n' "$LOG" ;;
+  recap-path) printf '%s\n' "$RECAP_DEFAULT" ;;
+  restore) shift; command_restore "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
