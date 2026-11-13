@@ -758,6 +758,22 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/archive/2026-11-13-pc-restart-skill/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-13-pc-restart-skill/specs/pc-restart-skill/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-13-pc-restart-skill/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/pc-restart-skill/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },

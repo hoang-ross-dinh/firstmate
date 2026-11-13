@@ -11,7 +11,7 @@ No written checklist told the first mate what to check before the restart or wha
 - The skill points to the owning scripts and skills and does not repeat them.
 - List the skill in `agent-skill-trigger-index` and in the documentation audience inventory.
 
-Out of scope: any change to `AGENTS.md`, any script, and the recap data's durable home, which another change adds.
+Out of scope: any change to `AGENTS.md`, any script, and the recap data's durable home, which a separate change owns.
 
 ## Capabilities
 
