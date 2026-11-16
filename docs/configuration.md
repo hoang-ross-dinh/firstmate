@@ -1747,6 +1747,17 @@ This is not a sandbox: it cannot revoke same-user access to credential files, pr
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh), and the Orca environment source in [`tests/fm-spawn-orca-worktree.test.sh`](../tests/fm-spawn-orca-worktree.test.sh).
 
+### Stale session values
+
+A pane inherits its environment from the long-lived backend daemon, which can hold a frozen snapshot of an earlier session.
+Before it types any export or the launch command, `bin/fm-spawn.sh` therefore types one `unset` of a fixed name list into every ship, scout, and secondmate pane, on a fresh spawn and on a relaunch alike.
+The list covers `FM_HOME`, `FM_STATE_OVERRIDE`, `FM_SPAWN_NO_GUARD`, `FM_SESSION_START_STAGE_FILE`, every `FM_BOOTSTRAP_*` and `FM_TIMING_*` name, the Claude session values (`CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_PID`, `CLAUDE_ENV_FILE`, `CLAUDE_PROJECT_DIR`, `CLAUDECODE`), and `TRACEPARENT`.
+Names are dropped and no value is read or logged.
+Values the spawn sets for the worker, such as `FM_TASK_ID`, the trace carrier, and a secondmate's `FM_HOME`, are set after the unset, and `PATH`, `HOME`, and captain configuration such as `FM_QUARTERDECK` are untouched.
+A name listed in `config/launch-env-allowlist` is left alone because that file is the captain's explicit choice to forward it.
+T3 Code has no pane and builds its environment explicitly, so it is unaffected.
+Coverage is in [`tests/fm-spawn-env-scrub.test.sh`](../tests/fm-spawn-env-scrub.test.sh).
+
 ### Compact adviser setting
 
 Every crewmate, scout, and secondmate Firstmate launches starts with `COMPACT_ADVISER_DISABLE=1` in its environment, on a fresh spawn and on a relaunch alike, so an unattended session never activates the compact adviser.

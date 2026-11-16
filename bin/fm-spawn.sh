@@ -399,6 +399,15 @@
 #   prevents equal task ids in different Firstmate homes from sharing a file.
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
+# Stale session values (SPAWN_SCRUB_ENV_NAMES):
+#   Every pane launch (ship, scout, secondmate, on spawn and relaunch) first
+#   types one `unset` of a fixed name list into the pane, before any export, so
+#   a frozen snapshot in the backend daemon's global environment (a primary
+#   home's FM_HOME, another Claude session's id and messaging token, bootstrap
+#   and timing values) never reaches the worker. Names are dropped, never read or
+#   logged. Values this spawn sets for the worker are set after it, and a name
+#   listed in config/launch-env-allowlist is left alone. T3 Code has no pane and
+#   builds its environment explicitly.
 # Launch environment (config/launch-env-allowlist):
 #   Absent means unchanged ambient inheritance. A present readable regular file
 #   opts every supported command-line launch (ship, scout, secondmate, raw
@@ -7788,6 +7797,39 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+# The one list of names a worker pane must not inherit from its backend daemon.
+# Keep each family complete by name: `unset` takes no pattern, and
+# tests/fm-spawn-env-scrub.test.sh fails when a FM_BOOTSTRAP_* or FM_TIMING_*
+# name appears under bin/ without being listed. Never add a name this spawn
+# exports for the worker (FM_TASK_ID, FM_TASK_INBOX, GOTMPDIR,
+# COMPACT_ADVISER_DISABLE, LAVISH_AXI_HOST, the secondmate FM_* prefix) or
+# ordinary configuration (PATH, HOME, FM_QUARTERDECK): the first would be undone
+# by order, the second is the worker's own. FM_HOME and TRACEPARENT are listed
+# because the stale ambient value is the hazard; a secondmate launch prefix and
+# the trace carrier set them again after this scrub.
+SPAWN_SCRUB_ENV_NAMES='
+  FM_HOME FM_STATE_OVERRIDE FM_SPAWN_NO_GUARD FM_SESSION_START_STAGE_FILE
+  FM_BOOTSTRAP_DETECT_ONLY FM_BOOTSTRAP_LOCKED FM_BOOTSTRAP_NETWORK
+  FM_BOOTSTRAP_NETWORK_LOCK_PID FM_BOOTSTRAP_NETWORK_PHASE
+  FM_BOOTSTRAP_PARALLEL_DIR FM_BOOTSTRAP_VERBOSE_FACTS
+  FM_TIMING_DETAIL_MAX FM_TIMING_EPOCH_MS FM_TIMING_LOG
+  CLAUDE_CODE_BRIDGE_SESSION_ID CLAUDE_CODE_CHILD_SESSION
+  CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN
+  CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED
+  CLAUDE_PID CLAUDE_ENV_FILE CLAUDE_PROJECT_DIR CLAUDECODE TRACEPARENT'
+# Print the pane's `unset` statement, or nothing when the allowlist keeps every
+# listed name. POSIX `unset` is exact on a name that is already absent.
+spawn_scrub_unset_line() {
+  local name line=
+  for name in $SPAWN_SCRUB_ENV_NAMES; do
+    case $'\n'"$LAUNCH_ENV_NAMES"$'\n' in
+    *$'\n'"$name"$'\n'*) continue ;;
+    esac
+    line="$line $name"
+  done
+  [ -z "$line" ] || printf 'unset%s' "$line"
+}
+
 if [ "$BACKEND" = t3code ]; then
   # No pane to export into: the same facts, under the same conditions as the
   # pane path below, become the launch directory's harness config
@@ -7825,6 +7867,16 @@ if [ "$BACKEND" = t3code ]; then
     }
   fi
 else
+# A pane inherits its environment from the long-lived backend daemon, which can
+# hold a frozen snapshot of some earlier session (a primary home's FM_HOME and
+# state override, another Claude session's id and messaging token). Dropping
+# those names here, before any export below and before the launch command, means
+# a stale value never reaches the worker and every name this spawn sets on
+# purpose is set afterwards. Names only: no value is read, logged or compared.
+# A name the captain forwards through config/launch-env-allowlist stays, because
+# that file is the explicit choice to hand the worker an ambient value.
+SPAWN_SCRUB_UNSET_LINE=$(spawn_scrub_unset_line)
+[ -z "$SPAWN_SCRUB_UNSET_LINE" ] || spawn_send_text_line "$T" "$SPAWN_SCRUB_UNSET_LINE"
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
