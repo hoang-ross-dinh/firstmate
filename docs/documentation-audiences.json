@@ -860,6 +860,26 @@
     {
       "path": ".agents/skills/validation-supervision/SKILL.md",
       "audience": "agent-runtime"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-relaunch-resume-session/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-relaunch-resume-session/specs/pc-restart-skill/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-relaunch-resume-session/specs/spawn-claude-session-resume/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-relaunch-resume-session/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/spawn-claude-session-resume/spec.md",
+      "audience": "maintainer-architecture"
     }
   ]
 }
