@@ -770,6 +770,26 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/archive/2026-11-16-board-detail-fields/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-board-detail-fields/specs/recap-board-text-warnings/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-board-detail-fields/specs/recap-board-views/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-board-detail-fields/specs/recap-item-command/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-board-detail-fields/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "openspec/specs/recap-item-command/spec.md",
       "audience": "maintainer-architecture"
     },
