@@ -842,6 +842,22 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "openspec/changes/archive/2026-11-16-spawn-env-scrub-launch/proposal.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-spawn-env-scrub-launch/specs/spawn-env-scrub/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/changes/archive/2026-11-16-spawn-env-scrub-launch/tasks.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "openspec/specs/spawn-env-scrub/spec.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     },
