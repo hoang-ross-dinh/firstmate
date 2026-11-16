@@ -514,6 +514,143 @@ test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not()
   pass "against the real publish a non-task key is reported and a task key is not"
 }
 
+test_problem_sets_clears_and_reads_stdin_and_a_too_long_one_exits_2() {
+  new_recap
+  local before long
+  run_item LW --problem 'What is wrong, and why it matters.' --no-publish
+  expect_code 0 "$STATUS" "problem text"
+  assert_equals '"What is wrong, and why it matters."' "$(field .alpha.problem)" "the problem is set"
+  STATUS=0
+  printf 'from stdin\nsecond line' | FM_RECAP_PUBLISH_BIN="$STUB" "$ITEM" "$RECAP" LW --problem - --no-publish > "$OUT" 2> "$ERR" || STATUS=$?
+  expect_code 0 "$STATUS" "problem from stdin"
+  assert_equals '"from stdin\nsecond line"' "$(field .alpha.problem)" "stdin keeps its line breaks"
+  run_item LW --problem '' --no-publish
+  expect_code 0 "$STATUS" "empty problem"
+  assert_equals '""' "$(field .alpha.problem)" "an empty text is stored so publish clears the field"
+  before=$(cat "$RECAP")
+  long=$(printf 'x%.0s' $(seq 1 601))
+  run_item LW --problem "$long" --no-publish
+  expect_code 2 "$STATUS" "problem over 600 characters"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged"
+  pass "--problem sets, reads stdin, clears with an empty text, and refuses over 600 characters"
+}
+
+test_option_given_once_or_more_replaces_the_whole_list_and_clear_options_empties_it() {
+  new_recap
+  run_item LW --option 'term=go-a,means=Fix it, then wait for the deploy.,next=The worker files a ticket.' --option 'term=go-b,means=Skip it.' --no-publish
+  expect_code 0 "$STATUS" "two options"
+  assert_equals '[{"term":"go-a","means":"Fix it, then wait for the deploy.","next":"The worker files a ticket."},{"term":"go-b","means":"Skip it."}]' \
+    "$(field .alpha.options)" "both options are stored, a comma inside a value is kept, and next may be left out"
+  assert_equals '["go-a","go-b"]' "$(jq -c '.tasks.alpha.reply_terms' "$RECAP")" "the file's reply terms become the option terms, not the older list"
+  run_item LW --option 'term=only,means=The one left.' --no-publish
+  assert_equals '[{"term":"only","means":"The one left."}]' "$(field .alpha.options)" "a later call replaces the whole list"
+  assert_equals '["only"]' "$(field .alpha.reply_terms)" "and the reply terms with it"
+  run_item LW --clear-options --no-publish
+  expect_code 0 "$STATUS" "clear options"
+  assert_equals '[]' "$(field .alpha.options)" "the list is empty, not absent, so publish clears it"
+  assert_equals '[]' "$(field .alpha.reply_terms)" "the reply terms the options made do not come back"
+  run_item LW --clear-options --reply-term kept --no-publish
+  expect_code 0 "$STATUS" "clear options and name a term"
+  assert_equals '["kept"]' "$(field .alpha.reply_terms)" "a term given in the same call stays, whatever the flag order"
+  run_item LW --reply-term kept --clear-options --no-publish
+  assert_equals '["kept"]' "$(field .alpha.reply_terms)" "also in the other flag order"
+  pass "--option replaces the whole list with its terms and --clear-options leaves no options and no stale terms"
+}
+
+test_a_bad_option_or_a_conflicting_flag_exits_2_before_anything_is_written() {
+  new_recap
+  local before spec long65 long301 long201
+  before=$(cat "$RECAP")
+  long65=$(printf 'x%.0s' $(seq 1 65))
+  long301=$(printf 'x%.0s' $(seq 1 301))
+  long201=$(printf 'x%.0s' $(seq 1 201))
+  for spec in 'means=no term' 'term=t' 'term=,means=m' "term=$long65,means=m" "term=t,means=$long301" \
+    "term=t,means=m,next=$long201" 'term=t,means=' 'term=t,term=u,means=m' 'other=x,term=t,means=m' 'plain text'; do
+    run_item LW --option "$spec" --no-publish
+    expect_code 2 "$STATUS" "bad option spec: $spec"
+  done
+  run_item LW --option 'term=1,means=m' --option 'term=2,means=m' --option 'term=3,means=m' --option 'term=4,means=m' \
+    --option 'term=5,means=m' --option 'term=6,means=m' --option 'term=7,means=m' --no-publish
+  expect_code 2 "$STATUS" "seven options"
+  run_item LW --option 'term=t,means=m' --reply-term x --no-publish
+  expect_code 2 "$STATUS" "--option before --reply-term"
+  run_item LW --reply-term x --option 'term=t,means=m' --no-publish
+  expect_code 2 "$STATUS" "--reply-term before --option"
+  run_item LW --clear-options --option 'term=t,means=m' --no-publish
+  expect_code 2 "$STATUS" "--clear-options with --option"
+  assert_contains "$(cat "$ERR")" "--clear-options" "the refusal names the flag"
+  assert_equals "$before" "$(cat "$RECAP")" "the file is unchanged after every refusal"
+  assert_equals "" "$(cat "$STUB_LOG")" "publish never ran"
+  pass "a bad option or a conflicting flag exits 2 before anything is written"
+}
+
+# The read-back of an ask: iteration 7 holds a revision of alpha that asks, merged with <revision-json>.
+asking_read() {  # <revision-json-merged-over-an-ask>
+  jq -c -n --argjson rev "$1" '[{seq: 7, tasks: ["alpha"], revisions: {alpha: ({state: "queued", waiting: false, reply_terms: [], options: [{term: "a", means: "m", next: ""}, {term: "b", means: "m", next: ""}]} + $rev)}}]'
+}
+
+test_an_ask_that_is_not_held_warns_on_stderr_and_a_held_or_finished_one_does_not() {
+  new_recap
+  STUB_READ=$(asking_read '{}') run_item --key alpha --summary s
+  expect_code 0 "$STATUS" "the warning leaves the exit code alone"
+  assert_contains "$(cat "$ERR")" "item alpha asks the captain (2 options) but its backlog task is not held" "an ask that is not held is named with its option count"
+  assert_contains "$(cat "$ERR")" "fm-captain-hold.sh" "the warning names the fix"
+  STUB_READ=$(jq -c '[(.[0] | .seq = 6), {seq: 7, tasks: ["alpha"], revisions: {}}]' <<< "$(asking_read '{}')") run_item --key alpha --summary s
+  assert_contains "$(cat "$ERR")" "asks the captain (2 options)" "an ask stored in an earlier iteration keeps warning"
+  STUB_READ=$(asking_read '{"options":[],"reply_terms":["x"]}') run_item --key alpha --summary s
+  assert_contains "$(cat "$ERR")" "asks the captain (1 options)" "reply terms alone count as an ask"
+  STUB_READ=$(asking_read '{"waiting":true}') run_item --key alpha --summary s
+  assert_equals "" "$(cat "$ERR")" "a held ask draws no warning"
+  STUB_READ=$(asking_read '{"state":"done"}') run_item --key alpha --summary s
+  assert_equals "" "$(cat "$ERR")" "a finished ask draws no warning"
+  STUB_READ=$(asking_read '{"options":[],"reply_terms":[]}') run_item --key alpha --summary s
+  assert_equals "" "$(cat "$ERR")" "an item that asks nothing draws no warning"
+  STUB_READ='[{"seq":7,"tasks":["beta"],"revisions":{"alpha":{"state":"queued","waiting":false,"reply_terms":["x"]}}}]' run_item --key alpha --summary s
+  assert_contains "$(cat "$ERR")" "not a task in the backlog" "a key outside the collection keeps its own warning"
+  assert_equals "0" "$(grep -c 'asks the captain' "$ERR" || true)" "and draws no ask warning on top of it"
+  pass "an ask that is not held warns on stderr and a held, finished, or empty one does not"
+}
+
+test_against_the_real_publish_options_derive_the_terms_and_the_warning_stops_once_held() {
+  local e2e="$TMP_ROOT/e2e-ask" out err status=0 task
+  mkdir -p "$e2e/home/data" "$e2e/home/config" "$e2e/home/state"
+  cp -R "$ROOT/bin" "$e2e/bin"
+  printf '#!/usr/bin/env bash\nprintf '"'"'session:\\n  url: "http://127.0.0.1:1/stub"\\n'"'"'\n' > "$e2e/bin/fm-bearings-board.sh"
+  chmod +x "$e2e/bin/fm-bearings-board.sh"
+  write_collect_e2e() {  # <waiting true|false>
+    jq -c -n --argjson w "$1" '{tasks: [{id: "t1", key: "t1", home: "main", kind: "task", repo: "r", state: "open", title: "Task one",
+      held: $w, hold_kind: (if $w then "captain" else "" end), hold_until: "", hold_reason: "", blockers: "", pr_url: "", issue_url: "", note: "", waiting: $w}],
+      warnings: []}' > "$e2e/home/collect.json"
+  }
+  e2e_item() {
+    status=0
+    FM_HOME="$e2e/home" FM_RECAP_COLLECT_FILE="$e2e/home/collect.json" "$e2e/bin/fm-recap-item.sh" "$e2e/recap.json" "$@" \
+      > "$e2e/out.txt" 2> "$e2e/err.txt" || status=$?
+    out=$(cat "$e2e/out.txt")
+    err=$(cat "$e2e/err.txt")
+  }
+  write_collect_e2e false
+  jq -c -n '{schema: "fm-recap.v1", tasks: {}}' > "$e2e/recap.json"
+  e2e_item --new t1 --theme LW --summary 'first' --reply-term stale
+  expect_code 0 "$status" "an item that starts with a bare reply term"
+  e2e_item --key t1 --problem 'Synthetic problem.' \
+    --option 'term=go-a,means=Do the thing.,next=The worker does it.' --option 'term=go-b,means=Do nothing.'
+  expect_code 0 "$status" "the same item given a problem and options"
+  assert_contains "$out" "changed: LW" "the options publish as a change"
+  assert_contains "$err" "item t1 asks the captain (2 options) but its backlog task is not held" "the real read-back warns while the task is not held"
+  task=$(jq -c -s 'last | .revisions.t1 | {problem, reply_terms, terms: [.options[].term]}' "$e2e/home/data/recap-iterations.jsonl")
+  assert_equals '{"problem":"Synthetic problem.","reply_terms":["go-a","go-b"],"terms":["go-a","go-b"]}' "$task" "publish stored the problem and derived the reply terms"
+  write_collect_e2e true
+  e2e_item --key t1 --summary 'second'
+  expect_code 0 "$status" "the same item once the task is held"
+  assert_equals "" "$err" "no warning once the task is held"
+  e2e_item --key t1 --clear-options
+  expect_code 0 "$status" "clearing the options"
+  task=$(jq -c -s 'last | .revisions.t1 | {has_options: has("options"), reply_terms}' "$e2e/home/data/recap-iterations.jsonl")
+  assert_equals '{"has_options":false,"reply_terms":[]}' "$task" "clearing the options leaves neither them nor the older reply term"
+  pass "against the real publish options derive the reply terms, the warning stops once held, and clearing them leaves no stale term"
+}
+
 fm_test_run \
   test_a_one_match_edit_replaces_summary_and_emoji_and_publishes_once \
   test_no_match_exits_nonzero_names_the_theme_and_writes_nothing \
@@ -540,4 +677,9 @@ fm_test_run \
   test_no_recap_path_uses_the_default_file_that_publish_names \
   test_a_missing_default_file_names_the_path_and_the_restore_command \
   test_against_the_real_publish_the_default_file_is_the_one_publish_reads \
-  test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not
+  test_against_the_real_publish_a_non_task_key_is_reported_and_a_task_key_is_not \
+  test_problem_sets_clears_and_reads_stdin_and_a_too_long_one_exits_2 \
+  test_option_given_once_or_more_replaces_the_whole_list_and_clear_options_empties_it \
+  test_a_bad_option_or_a_conflicting_flag_exits_2_before_anything_is_written \
+  test_an_ask_that_is_not_held_warns_on_stderr_and_a_held_or_finished_one_does_not \
+  test_against_the_real_publish_options_derive_the_terms_and_the_warning_stops_once_held

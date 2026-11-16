@@ -44,8 +44,8 @@
 # survives a reboot where a file under /tmp does not. An explicit path wins, and
 # bin/fm-recap-item.sh uses the same default. restore writes the recap file from
 # the log: for each task in the newest iteration it takes the last stored revision
-# and keeps the first mate fields of that revision (summary, emoji, theme,
-# reply_terms, close, on_hold, links). It refuses to replace a non-empty file
+# and keeps the first mate fields of that revision (summary, problem, options,
+# emoji, theme, reply_terms, close, on_hold, links). It refuses to replace a non-empty file
 # unless --force is given, because that file may hold edits not yet published.
 # The log cannot give back an answer, which a revision keeps only for its own
 # publish, a recap entry for a key that never was a backlog task, or the line
@@ -56,6 +56,9 @@
 #   { "schema": "fm-recap.v1",
 #     "tasks": { "<task-key>": { "summary": "...", "emoji": "...",
 #                                "theme": "LW", "reply_terms": ["merge"],
+#                                "problem": "...",
+#                                "options": [{ "term": "merge", "means": "...",
+#                                              "next": "..." }],
 #                                "close": "release",
 #                                "on_hold": "waiting: first review feedback",
 #                                "answer": { "to": "<note id>", "text": "..." },
@@ -89,8 +92,21 @@
 # code is not added twice. A line that does not meet these rules stays in the
 # summary. The lifted link follows the explicit links and precedes derived ticket
 # chips, and a recap that still carries the line publishes no new revision.
+# problem is what is wrong or what is asked, and why it matters, in 1 to 3
+# sentences: a string of 600 characters or fewer, and an empty string clears it.
+# options is the list of answers the captain can give to a task that asks: 1 to 6
+# items of { term, means, next }. term is the exact reply term (1 to 64
+# characters), means says what the option does and what it costs (300 characters or
+# fewer), and next says what happens after the answer and who does it (200
+# characters or fewer). means and next may be left out, and the board flags an
+# option with no means. An empty list clears the options. While options is
+# non-empty, compose writes reply_terms from options[].term, so the two lists
+# cannot drift and options wins over a reply_terms sent beside it. Clearing the
+# options keeps a reply_terms sent beside the empty list, which bin/fm-recap-item.sh
+# sets to match. Both fields keep their last value when omitted, and a task with
+# neither stores neither.
 # A rejected publish prints one line per problem, each naming the task key and the
-# field (a link names its index and sub-field, such as links[1].kind).
+# field (a link or option names its index and sub-field, such as links[1].kind).
 #
 # answer is the first mate's full answer to a board comment, published as a new
 # iteration so it shows on the live board next to the comment it answers:
@@ -131,10 +147,14 @@
 # warning on stderr and the publish still succeeds.
 #
 # TASK TEXT WARNINGS. The board flags, and never writes, text on an open task: no
-# summary, a summary under 25 words, or a summary that names a ticket key or an MR
-# reference (!123) with no link of that code. The ticket key pattern is the one
-# from config/recap-ticket-url, carried to the page as the payload field ticket_re,
-# so without that setting only MR references are checked.
+# summary, a summary under 25 words (not flagged once the task has both a problem
+# and options), or a summary, problem, or option meaning that names a ticket key or
+# an MR reference (!123) with no link of that code. An ask is a task with options
+# or reply terms. The board also flags an ask with no problem, an option with no
+# meaning, an ask whose task is not held for the captain, and a held task with no
+# options or reply terms. The ticket key pattern is the one from
+# config/recap-ticket-url, carried to the page as the payload field ticket_re, so
+# without that setting only MR references are checked.
 #
 # THE BOARD PAYLOAD is fm-recap-board.v1: the last 30 iterations are navigable,
 # and every task carries all of its revisions in full, so the board renders each
@@ -352,6 +372,24 @@ validate_recap() {  # <recap.json>
             "must be {to: <note id>, text: <non-blank text of 20000 characters or fewer>}"),
           field("reply_terms"; type == "array" and ([.[] | isstr and length > 0 and length <= 64] | all);
             "must be an array of strings of 1 to 64 characters"),
+          field("problem"; isstr and length <= 600; "must be a string of 600 characters or fewer"),
+          (if ($v | has("options")) then
+             if ($v.options | type) != "array" then "task \($k): options must be an array"
+             elif ($v.options | length) > 6 then "task \($k): options must hold 6 items or fewer"
+             else
+               ($v.options | to_entries[]) as $oe | $oe.key as $i | $oe.value as $o
+               | "task \($k): options[\($i)]" as $at
+               | if ($o | type) != "object" then "\($at) must be an object"
+                 else
+                   (if ($o.term | isstr and length > 0 and length <= 64) then empty
+                    else "\($at).term must be a string of 1 to 64 characters" end),
+                   (if ($o | has("means") | not) or ($o.means | isstr and length <= 300) then empty
+                    else "\($at).means must be a string of 300 characters or fewer" end),
+                   (if ($o | has("next") | not) or ($o.next | isstr and length <= 200) then empty
+                    else "\($at).next must be a string of 200 characters or fewer" end)
+                 end
+             end
+           else empty end),
           (if ($v | has("links")) then
              if ($v.links | type) != "array" then "task \($k): links must be an array"
              else
@@ -439,14 +477,24 @@ compose_entry() {  # <entries.json> <collected.json> <recap.json>
         | ($last[$t.key] // {}) as $old
         | ($fm[$t.key] // {}) as $mine
         | lift($mine.summary // $old.summary // "") as $lf
+        # Options are stored in one shape, so a restored recap composes to the very
+        # revision it came from and publishes no change.
+        | (($mine.options // $old.options // []) | map({term, means: (.means // ""), next: (.next // "")})) as $opts
         | ($t | del(.key, .id)) + {id: $t.id}
         + {
             summary: $lf.summary,
             emoji: ($mine.emoji // $old.emoji // ""),
             theme: ($mine.theme // $old.theme // "misc"),
-            reply_terms: ($mine.reply_terms // $old.reply_terms // []),
+            # reply_terms follow options while there are any, so the two lists
+            # cannot drift. Cleared options clear the terms they produced.
+            reply_terms: (if ($opts | length) > 0 then ($opts | map(.term))
+              else ($mine.reply_terms // (if ($mine | has("options")) then [] else $old.reply_terms end) // []) end),
             close: ($mine.close // $old.close // "")
           }
+        # problem and options are stored only while set, like on_hold, so a task
+        # that never had them keeps its earlier revision unchanged.
+        + (($mine.problem // $old.problem // "") as $p | if $p != "" then {problem: $p} else {} end)
+        + (if ($opts | length) > 0 then {options: $opts} else {} end)
         # links are stored only when present, so a task without any keeps its
         # earlier revision unchanged.
         # on_hold is stored only while set, so an unmarked task keeps its
@@ -644,6 +692,8 @@ command_restore() {
        tasks: ([$present[] | . as $k | $last[$k] | select(. != null)
          | {key: $k, value: ({summary: (.summary // ""), emoji: (.emoji // ""), theme: (.theme // "misc"),
                               reply_terms: (.reply_terms // [])}
+             + (if (.problem // "") != "" then {problem} else {} end)
+             + (if (.options // []) | length > 0 then {options} else {} end)
              + (if (.close // "") != "" then {close} else {} end)
              + (if (.on_hold // "") != "" then {on_hold} else {} end)
              + (if (.links // []) | length > 0 then {links} else {} end))}]

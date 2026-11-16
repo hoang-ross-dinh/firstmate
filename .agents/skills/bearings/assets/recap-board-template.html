@@ -184,8 +184,13 @@ a { color: inherit; text-decoration: none; }
 .rb-panel h3 { margin: 0; font-size: var(--fs-h4); color: var(--text-strong); }
 .rb-links { display: flex; gap: 12px; flex-wrap: wrap; font-size: var(--fs-sm); }
 .rb-links a { color: var(--ocean-600); text-decoration: underline; }
-.rb-opts { display: flex; flex-direction: column; gap: 6px; }
+.rb-opts { display: flex; flex-direction: column; gap: 10px; }
 .rb-opt { display: flex; gap: 8px; align-items: baseline; }
+.rb-opt__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.rb-opt__term { font-weight: 800; color: var(--text-strong); }
+.rb-opt__next { font-size: var(--fs-sm); color: var(--text-faint); }
+.rb-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.rb-label { font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
 .rb-field {
   width: 100%; font: inherit; padding: 8px 10px; border-radius: var(--radius-sm);
   border: 1.5px solid var(--border-default); background: var(--white); color: var(--text-body);
@@ -292,7 +297,7 @@ a { color: inherit; text-decoration: none; }
   var COMMENT_LIMIT = 2000;
   var SHOWN = ["state", "title", "home", "repo", "hold_reason", "blockers", "pr_url",
     "issue_url", "note", "summary", "emoji", "theme", "reply_terms", "kind", "hold_kind",
-    "hold_until", "close", "on_hold", "links"];
+    "hold_until", "close", "on_hold", "links", "problem", "options"];
 
   var st = { iter: data.iteration, filter: "open", task: null, arrived: false };
   var FILTERS = [["open", "Open"], ["changed", "Changed in this iteration"],
@@ -383,19 +388,43 @@ a { color: inherit; text-decoration: none; }
   /* A task the recap never described carries the default "misc" theme and no summary, so it
      shows no Recap badge. A recap line is a summary, an emoji, or a theme other than the default. */
   function hasRecap(rev) { return !!(rev.summary || rev.emoji || (rev.theme && rev.theme !== "misc")); }
+  /* The options a task offers the captain: its stored options, or else its bare reply terms as options with no meaning. An entry with no term is ignored, so a hand-edited log cannot break the panel. */
+  function callOptions(rev) {
+    var out = [];
+    (Array.isArray(rev.options) ? rev.options : []).forEach(function (o) {
+      if (o && typeof o.term === "string" && o.term) {
+        out.push({ term: o.term, means: typeof o.means === "string" ? o.means : "", next: typeof o.next === "string" ? o.next : "" });
+      }
+    });
+    if (out.length) return out;
+    (Array.isArray(rev.reply_terms) ? rev.reply_terms : []).forEach(function (t) {
+      if (typeof t === "string" && t) out.push({ term: t, means: "", next: "" });
+    });
+    return out;
+  }
   /* The text warnings of an open task. The board only flags: no summary, a summary under the
-     minimum words, or a summary naming a ticket key or MR reference that no link carries. */
+     minimum words (waived once the task has a problem and options, which carry the detail), text
+     naming a ticket key or MR reference that no link carries, and the four ask checks: an ask with no
+     problem, an option with no meaning, an ask whose task is not held, a held task with no call. An
+     ask is a task with options or reply terms. */
   function textFlags(rev) {
-    var out = [], s = (rev.summary || "").trim();
+    var out = [], s = (rev.summary || "").trim(), opts = callOptions(rev), ask = opts.length > 0;
+    var problem = (typeof rev.problem === "string" ? rev.problem : "").trim();
+    var structured = !!problem && Array.isArray(rev.options) && rev.options.length > 0;
     if (rev.state === "done") return out;
-    if (!s) { out.push({ badge: "no summary", text: "No summary yet." }); return out; }
-    var words = s.split(/\s+/).length;
-    if (words < MIN_SUMMARY_WORDS) out.push({ badge: "short summary", text: "The summary has " + words + " words, under " + MIN_SUMMARY_WORDS + "." });
-    var have = {}, missing = [];
+    var words = s ? s.split(/\s+/).length : 0;
+    if (!s) out.push({ badge: "no summary", text: "No summary yet." });
+    else if (words < MIN_SUMMARY_WORDS && !structured) out.push({ badge: "short summary", text: "The summary has " + words + " words, under " + MIN_SUMMARY_WORDS + "." });
+    var have = {}, missing = [], text = [s, problem].concat(opts.map(function (o) { return o.means; })).join("\n");
     xlinks(rev).forEach(function (l) { have[l.code] = true; });
-    var refs = (TICKET_RE ? (s.match(TICKET_RE) || []) : []).concat(s.match(/![0-9]+/g) || []);
+    var refs = (TICKET_RE ? (text.match(TICKET_RE) || []) : []).concat(text.match(/![0-9]+/g) || []);
     refs.forEach(function (ref) { if (!have[ref] && missing.indexOf(ref) === -1) missing.push(ref); });
-    if (missing.length) out.push({ badge: "unlinked ref", text: "The summary names " + missing.join(", ") + " with no matching link." });
+    if (missing.length) out.push({ badge: "unlinked ref", text: "The recap text names " + missing.join(", ") + " with no matching link." });
+    if (ask && !problem) out.push({ badge: "no problem", text: "This ask has no problem statement. Add one with fm-recap-item.sh --problem." });
+    var bare = opts.filter(function (o) { return !o.means.trim(); }).map(function (o) { return o.term; });
+    if (bare.length) out.push({ badge: "option without meaning", text: "No meaning for " + bare.join(", ") + ". Add each with fm-recap-item.sh --option." });
+    if (ask && !rev.waiting) out.push({ badge: "asks but not held", text: "This task asks the captain but is not held for the captain, so no hold records the call. Hold it with fm-captain-hold.sh or clear its options." });
+    if (!ask && rev.waiting) out.push({ badge: "held with no call", text: "This task is held for the captain but offers no options. Add them with fm-recap-item.sh --option." });
     return out;
   }
   /* priority is the row emoji: red 0, yellow 1, green 2, anything else last */
@@ -674,23 +703,31 @@ a { color: inherit; text-decoration: none; }
     return wrap;
   }
 
-  function holdAnswer(parent, task, rev) {
+  function callCard(parent, task, rev) {
     var relay = task.home !== MAIN_HOME;
     var panel = el("section", "fm-card rb-panel");
-    panel.appendChild(el("h3", "", "Waiting on you"));
-    if (rev.hold_reason) panel.appendChild(el("div", "rb-row__sub", rev.hold_reason));
+    panel.appendChild(el("h3", "", "Your call"));
     if (relay) panel.appendChild(el("div", "rb-row__sub", "Answer goes to " + task.home + " through the first mate"));
     var form = questionForm(relay ? "answer." + slug(task.key) : task.id);
     var opts = el("div", "rb-opts");
     var radios = [], terms = {};
-    (rev.reply_terms || []).concat(relay ? [] : ["reconcile"]).forEach(function (term) {
+    callOptions(rev).concat(relay ? [] : [{ term: "reconcile", means: "", next: "" }]).forEach(function (o) {
+      var term = o.term;
       var lab = el("label", "rb-opt");
       var input = document.createElement("input");
       input.type = "radio"; input.name = "answer"; input.value = slug(term);
       terms[input.value] = term;
       radios.push(input);
       lab.appendChild(input);
-      lab.appendChild(el("span", "", term === "reconcile" ? "Reconcile" : term));
+      if (!o.means && !o.next) {
+        lab.appendChild(el("span", "", term === "reconcile" ? "Reconcile" : term));
+      } else {
+        var text = el("div", "rb-opt__body");
+        text.appendChild(el("span", "rb-opt__term", term));
+        if (o.means) text.appendChild(el("span", "", o.means));
+        if (o.next) text.appendChild(el("span", "rb-opt__next", "Next: " + o.next));
+        lab.appendChild(text);
+      }
       opts.appendChild(lab);
     });
     form.appendChild(opts);
@@ -724,6 +761,25 @@ a { color: inherit; text-decoration: none; }
       ui.queued.hidden = false;
     });
     panel.appendChild(form);
+    parent.appendChild(panel);
+  }
+
+  /* The hold reason is the owning home's own text and can differ from the recap, so it stays reachable but closed until the captain opens it. */
+  function holdReason(parent, task, rev) {
+    if (!rev.hold_reason) return;
+    var panel = el("section", "fm-card rb-panel");
+    panel.appendChild(el("h3", "", "Hold reason from " + task.home));
+    var text = el("div", "rb-row__sub", rev.hold_reason);
+    text.hidden = true;
+    var btn = el("button", "fm-btn fm-btn--sm fm-btn--gold", "Show hold reason");
+    btn.type = "button";
+    btn.addEventListener("click", function () {
+      var shown = text.hidden;
+      text.hidden = !shown;
+      btn.textContent = shown ? "Hide hold reason" : "Show hold reason";
+    });
+    panel.appendChild(btn);
+    panel.appendChild(text);
     parent.appendChild(panel);
   }
 
@@ -1029,7 +1085,24 @@ a { color: inherit; text-decoration: none; }
     if (rev.repo) badges.appendChild(badge("neutral", rev.repo));
     if (hasRecap(rev)) badges.appendChild(badge("neutral", "Recap " + rev.theme));
     top.appendChild(badges);
-    if (rev.summary) top.appendChild(el("div", "", rev.summary));
+    var problem = typeof rev.problem === "string" ? rev.problem.trim() : "";
+    /* With a problem the summary is the finding, so both blocks carry a label to tell them apart. */
+    if (problem) {
+      var pb = el("div", "rb-block");
+      pb.appendChild(el("div", "rb-label", "Problem"));
+      pb.appendChild(el("div", "", problem));
+      top.appendChild(pb);
+    }
+    if (rev.summary) {
+      if (problem) {
+        var fb = el("div", "rb-block");
+        fb.appendChild(el("div", "rb-label", "Finding"));
+        fb.appendChild(el("div", "", rev.summary));
+        top.appendChild(fb);
+      } else {
+        top.appendChild(el("div", "", rev.summary));
+      }
+    }
     textFlags(rev).forEach(function (f) {
       var w = el("div", "fm-card rb-warn");
       w.appendChild(badge("warn", f.badge));
@@ -1044,8 +1117,11 @@ a { color: inherit; text-decoration: none; }
     jiraKeys(rev.title + " " + (rev.note || "")).forEach(function (k) { links.appendChild(JIRA_BASE ? link(JIRA_BASE + k, k) : el("span", "", k)); });
     top.appendChild(links);
     box.appendChild(top);
+    if (rev.waiting || callOptions(rev).length) {
+      callCard(box, task, rev);
+      holdReason(box, task, rev);
+    }
     references(box, rev);
-    if (rev.waiting) holdAnswer(box, task, rev);
     actions(box, task, rev);
     lastResponse(box, task);
     commentBox(box, task);

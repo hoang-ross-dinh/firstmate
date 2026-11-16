@@ -41,6 +41,22 @@
 #                        reply_terms list. Each term is 1 to 64 characters.
 #   --clear-reply-terms  Set reply_terms to []. It cannot be combined with
 #                        --reply-term.
+#   --problem <text>     Replace the problem: what is wrong or asked, and why it
+#                        matters, at most 600 characters. "-" reads it from stdin
+#                        and an empty text clears it.
+#   --option term=..,means=..[,next=..]
+#                        Repeatable. Given at least once, it REPLACES the whole
+#                        options list with 1 to 6 options. term is 1 to 64
+#                        characters and is the exact reply term, means is what the
+#                        option does and costs (at most 300 characters), next is
+#                        what happens after the answer (at most 200). It also sets
+#                        reply_terms to the option terms, so --option cannot be
+#                        combined with --reply-term. A comma inside a value is
+#                        fine, a key name followed by "=" after a comma starts
+#                        the next field.
+#   --clear-options      Set options to [] and reply_terms to [], unless the same
+#                        call gives --reply-term. It cannot be combined with
+#                        --option.
 #   --add-link kind=..,code=..,url=..[,text=..]
 #                        Repeatable. kind is ticket, mr, slack, doc, or report, code
 #                        is 1 to 64 characters, url is http(s) without spaces, text
@@ -76,21 +92,23 @@
 # file is already written when publish fails, so a retry is `fm-recap-publish.sh
 # publish <recap.json>`.
 #
-# THE WARNING. publish builds revisions only for entries keyed by a task in the
+# THE WARNINGS. publish builds revisions only for entries keyed by a task in the
 # backlog collection and drops any other key without a word, so such an edit reads
 # "changed: -" and the board shows nothing new. After a publish this command reads
 # the new iteration back and warns on stderr, still exiting 0, when the item's key
 # is not a collected task, or when no stored field of the item changed. When the
 # iteration cannot be read back it falls back to warning that the item's theme is
-# missing from the changed list.
+# missing from the changed list. It also warns, on the last stored revision of an
+# open item, when the item asks the captain (it holds options or reply terms) but
+# its backlog task is not held, because then no hold records the call.
 #
 # Exit codes:
 #   0  the edit was written and, unless --no-publish, published with an iteration
 #   1  no, several, or an existing matching item, an unknown drop code, an
 #      unreadable file, publish failed, or publish printed no "iteration: N" line
-#   2  usage error: unknown flag, missing value, bad link spec, bad key or theme,
-#      a conflicting flag pair, a bad or half-given answer, or no selector or
-#      edit flag
+#   2  usage error: unknown flag, missing value, bad link spec, bad option spec,
+#      bad key or theme, a conflicting flag pair, a bad or half-given answer, or
+#      no selector or edit flag
 #
 # FM_RECAP_PUBLISH_BIN (tests only) replaces the fm-recap-publish.sh path. It
 # receives `publish <recap.json>` and `read`, and lets a test run with no board.
@@ -140,6 +158,24 @@ parse_link() {  # <spec>
       else $l end'
 }
 
+# One option spec as an option object, or {err} naming what is wrong. The limits
+# repeat validate_recap in fm-recap-publish.sh on purpose: an option that passes
+# here must not make the later publish reject the whole recap. means is required
+# here, though publish accepts an option without one, because an option the
+# captain cannot read the meaning of is what the board flags.
+parse_option() {  # <spec>
+  jq -c -n --arg s "$1" '
+    [$s | scan("(?:^|,)(term|means|next)=(.*?)(?=,(?:term|means|next)=|$)")] as $p
+    | ($p | map(.[0] + "=" + .[1]) | join(",")) as $back
+    | ($p | map({key: .[0], value: .[1]}) | from_entries) as $o
+    | if $back != $s then {err: "must be term=..,means=..[,next=..]"}
+      elif ($p | map(.[0]) | unique | length) != ($p | length) then {err: "repeats a field"}
+      elif (($o.term // "") | length) < 1 or ($o.term | length) > 64 then {err: "term must be 1 to 64 characters"}
+      elif (($o.means // "") | length) < 1 or ($o.means | length) > 300 then {err: "means must be 1 to 300 characters"}
+      elif ($o | has("next")) and ($o.next | length) > 200 then {err: "next must be 200 characters or fewer"}
+      else $o end'
+}
+
 command -v jq >/dev/null 2>&1 || fail 1 "jq is required"
 
 case "${1-}" in
@@ -164,6 +200,8 @@ PUBLISH_AFTER=1
 FORCE_REPLACE=0
 CLEAR_TERMS=0
 ADD_TERMS=0
+CLEAR_OPTIONS=0
+ADD_OPTIONS=0
 CLEAR_ANSWER=0
 ANSWER_TO=''
 ANSWER_TEXT=''
@@ -186,10 +224,14 @@ while [ "$#" -gt 0 ]; do
       CLEAR_TERMS=1
       EDIT=$(jq -c '. + {reply_terms: []}' <<< "$EDIT")
       shift; continue ;;
+    --clear-options)
+      CLEAR_OPTIONS=1
+      EDIT=$(jq -c '. + {options: []}' <<< "$EDIT")
+      shift; continue ;;
     --clear-answer)
       CLEAR_ANSWER=1
       shift; continue ;;
-    --key|--new|--theme|--summary|--summary-file|--answer-to|--answer-file|--emoji|--reply-term|--add-link|--drop-link) ;;
+    --key|--new|--theme|--summary|--summary-file|--problem|--option|--answer-to|--answer-file|--emoji|--reply-term|--add-link|--drop-link) ;;
     *) fail 2 "unknown argument: $flag" ;;
   esac
   [ "$#" -ge 2 ] || fail 2 "$flag needs a value"
@@ -217,6 +259,17 @@ while [ "$#" -gt 0 ]; do
       [ -f "$value" ] || fail 2 "--summary-file does not exist: $value"
       value=$(cat -- "$value")
       EDIT=$(jq -c --arg v "$value" '. + {summary: $v}' <<< "$EDIT") ;;
+    --problem)
+      [ "$value" != "-" ] || value=$(cat)
+      [ "$(chars "$value")" -le 600 ] || fail 2 "--problem must be 600 characters or fewer"
+      EDIT=$(jq -c --arg v "$value" '. + {problem: $v}' <<< "$EDIT") ;;
+    --option)
+      option=$(parse_option "$value")
+      err=$(jq -r '.err // empty' <<< "$option")
+      [ -z "$err" ] || fail 2 "bad --option \"$value\": $err"
+      ADD_OPTIONS=$((ADD_OPTIONS + 1))
+      [ "$ADD_OPTIONS" -le 6 ] || fail 2 "--option was given more than 6 times"
+      EDIT=$(jq -c --argjson o "$option" '.options += [$o]' <<< "$EDIT") ;;
     --answer-to)
       printf '%s' "$value" | grep -qE '^[A-Za-z0-9._-]{1,64}$' \
         || fail 2 "--answer-to must be 1 to 64 letters, digits, dots, dashes, or underscores"
@@ -245,6 +298,19 @@ for s in "$SEL_THEME" "$SEL_KEY" "$NEW_KEY"; do
 done
 [ "$selectors" -eq 1 ] || fail 2 "give exactly one of <THEME>, --key, or --new"
 [ "$CLEAR_TERMS$ADD_TERMS" != 11 ] || fail 2 "--clear-reply-terms cannot be combined with --reply-term"
+[ "$CLEAR_OPTIONS" -eq 0 ] || [ "$ADD_OPTIONS" -eq 0 ] || fail 2 "--clear-options cannot be combined with --option"
+# The publish writes reply_terms from options, so a hand-set term list beside them
+# would be silently overridden, and the two flags are refused instead.
+[ "$ADD_OPTIONS" -eq 0 ] || [ "$ADD_TERMS" -eq 0 ] || fail 2 "--option cannot be combined with --reply-term"
+# The file keeps reply_terms equal to the option terms. Publish ignores reply_terms
+# while options exist, so an older list left beside the options would come back
+# the moment the options are cleared. Both are built here, after the loop, so the
+# order of the flags does not matter.
+if [ "$ADD_OPTIONS" -gt 0 ]; then
+  EDIT=$(jq -c '. + {reply_terms: (.options | map(.term))}' <<< "$EDIT")
+elif [ "$CLEAR_OPTIONS" -eq 1 ] && [ "$ADD_TERMS" -eq 0 ]; then
+  EDIT=$(jq -c '. + {reply_terms: []}' <<< "$EDIT")
+fi
 # The answer limits repeat validate_recap in fm-recap-publish.sh on purpose: an
 # answer that passes here must not make the later publish reject the whole recap.
 # The answer is built after the loop because its two flags arrive in either order.
@@ -351,12 +417,25 @@ iteration=$(printf '%s\n' "$out" | sed -n 's/^iteration: \([0-9][0-9]*\)$/\1/p' 
 # The iteration read back says exactly why the item did not change, which the
 # changed list alone cannot: another item of the same theme can change in the same
 # publish and hide the miss.
-entry=$("$PUBLISH" read 2>/dev/null | jq -c --argjson n "$iteration" '[.[] | select(.seq == $n)] | first // empty' 2>/dev/null || true)
+log=$("$PUBLISH" read 2>/dev/null || true)
+entry=$(jq -c --argjson n "$iteration" '[.[] | select(.seq == $n)] | first // empty' <<< "$log" 2>/dev/null || true)
 if [ -n "$entry" ]; then
   if ! jq -e --arg k "$KEY" '.tasks | index($k)' <<< "$entry" >/dev/null; then
     printf 'fm-recap-item: warning: item key %s is not a task in the backlog collection, so publish ignored it and the board shows no change.\n' "$KEY" >&2
-  elif ! jq -e --arg k "$KEY" '.revisions | has($k)' <<< "$entry" >/dev/null; then
-    printf 'fm-recap-item: warning: no stored field of %s differs from its last revision, so iteration %s holds no revision for it.\n' "$KEY" "$iteration" >&2
+  else
+    if ! jq -e --arg k "$KEY" '.revisions | has($k)' <<< "$entry" >/dev/null; then
+      printf 'fm-recap-item: warning: no stored field of %s differs from its last revision, so iteration %s holds no revision for it.\n' "$KEY" "$iteration" >&2
+    fi
+    # The call is read from the last stored revision, not the edit, so a task that
+    # asked in an earlier publish and is still not held keeps warning.
+    asks=$(jq -r --arg k "$KEY" '
+      [.[] | .revisions[$k]? | select(. != null)] | last // empty
+      | select(.state != "done" and (.waiting | not))
+      | ((.options // []) | length) as $o | ((.reply_terms // []) | length) as $t
+      | if $o > 0 then $o elif $t > 0 then $t else empty end' <<< "$log" 2>/dev/null || true)
+    if [ -n "$asks" ]; then
+      printf 'fm-recap-item: warning: item %s asks the captain (%s options) but its backlog task is not held, so no hold records the call. Hold it with fm-captain-hold.sh or clear the options and reply terms.\n' "$KEY" "$asks" >&2
+    fi
   fi
 else
   changed=$(printf '%s\n' "$out" | sed -n 's/^changed: //p' | tail -1)

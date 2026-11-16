@@ -1772,6 +1772,220 @@ test_the_ticket_key_warning_uses_the_recap_ticket_setting_only() {
   pass "the ticket key warning uses the recap ticket setting and checks no key without one"
 }
 
+# --- problem and options ------------------------------------------------------
+
+# One synthetic ask: a problem and two options, the second without a next step.
+ASK_OPTIONS='[{"term":"go-a","means":"Fix the code; clears the backlog.","next":"The worker files a ticket, then builds the fix."},{"term":"go-b","means":"Skip the stuck messages by hand."}]'
+ASK_PROBLEM='Synthetic alerts stopped, so nothing reaches the channel until the consumer is unblocked.'
+
+ask_recap() {  # [extra-json-merged-into-the-entry]
+  jq -c -n --arg p "$ASK_PROBLEM" --argjson o "$ASK_OPTIONS" --argjson extra "${1:-{\}}" '{a: ({problem: $p, options: $o} + $extra)}'
+}
+
+test_problem_and_options_are_stored_in_one_shape_and_derive_the_reply_terms() {
+  local home out
+  home=$(make_home ask-store)
+  write_collect "$home" "[$(collected a queued "Task A"), $(collected b queued "Task B"), $(collected c queued "Task C")]"
+  write_recap "$home" "$(ask_recap '{"reply_terms":["stale"]}' | jq -c '. + {b: {options: [{term: "only"}]}}')"
+  publish "$home" >/dev/null || fail "a publish with a problem and options failed"
+  out=$(tail -1 "$(log_of "$home")")
+  printf '%s' "$out" | jq -e --arg p "$ASK_PROBLEM" '.revisions.a.problem == $p' >/dev/null || fail "the problem was not stored: $out"
+  printf '%s' "$out" | jq -e '.revisions.a.options == [
+      {term: "go-a", means: "Fix the code; clears the backlog.", next: "The worker files a ticket, then builds the fix."},
+      {term: "go-b", means: "Skip the stuck messages by hand.", next: ""}]' >/dev/null \
+    || fail "the options were not stored with means and next in one shape: $out"
+  printf '%s' "$out" | jq -e '.revisions.a.reply_terms == ["go-a", "go-b"]' >/dev/null \
+    || fail "reply_terms did not follow the options over the stale list sent beside them: $out"
+  printf '%s' "$out" | jq -e '.revisions.b.options == [{term: "only", means: "", next: ""}] and .revisions.b.reply_terms == ["only"]' >/dev/null \
+    || fail "an option with a term alone was not stored: $out"
+  printf '%s' "$out" | jq -e '.revisions.c | (has("problem") or has("options")) | not' >/dev/null \
+    || fail "a task with neither field stored one: $out"
+  publish "$home" >/dev/null || fail "the republish failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "an identical republish made a revision"
+  write_recap "$home" '{"a":{"summary":"later"}}'
+  publish "$home" >/dev/null || fail "a publish that omits both fields failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a | (.options | length) == 2 and has("problem") and .reply_terms == ["go-a", "go-b"]' >/dev/null \
+    || fail "an omitted problem or options did not keep its last value"
+  pass "problem and options are stored in one shape, derive reply_terms, and keep their value when omitted"
+}
+
+test_an_empty_options_list_and_an_empty_problem_clear_them_and_the_terms_they_made() {
+  local home
+  home=$(make_home ask-clear)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" "$(ask_recap)"
+  publish "$home" >/dev/null || fail "the first publish failed"
+  write_recap "$home" '{"a":{"options":[]}}'
+  publish "$home" >/dev/null || fail "a publish clearing options failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a | (has("options") | not) and .reply_terms == [] and has("problem")' >/dev/null \
+    || fail "an empty options list did not clear the options and their terms alone: $(tail -1 "$(log_of "$home")")"
+  write_recap "$home" '{"a":{"problem":""}}'
+  publish "$home" >/dev/null || fail "a publish clearing the problem failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions.a | has("problem") | not' >/dev/null \
+    || fail "an empty problem did not clear it"
+  pass "an empty options list and an empty problem clear their fields and the reply terms the options made"
+}
+
+test_a_bad_problem_or_option_publishes_nothing_and_names_the_field() {
+  local home want task long_problem long_means long_next
+  home=$(make_home ask-bad)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" '{}'
+  publish "$home" >/dev/null || fail "the first publish failed"
+  long_problem=$(printf 'x%.0s' $(seq 1 601))
+  long_means=$(printf 'x%.0s' $(seq 1 301))
+  long_next=$(printf 'x%.0s' $(seq 1 201))
+  while IFS='|' read -r want task; do
+    printf '{"schema":"fm-recap.v1","tasks":{"a":%s}}' "$task" > "$home/recap.json"
+    err=$(publish "$home" 2>&1 >/dev/null) && fail "a bad entry published: $task"
+    assert_contains "$err" "$want" "the refusal names the task and field for $task"
+  done <<BAD
+task a: problem must be|{"problem":3}
+task a: problem must be|{"problem":"$long_problem"}
+task a: options must be an array|{"options":"go"}
+task a: options must hold 6 items or fewer|{"options":[{"term":"1"},{"term":"2"},{"term":"3"},{"term":"4"},{"term":"5"},{"term":"6"},{"term":"7"}]}
+task a: options[0] must be an object|{"options":["go"]}
+task a: options[1].term must be|{"options":[{"term":"ok"},{"term":""}]}
+task a: options[0].term must be|{"options":[{"means":"no term"}]}
+task a: options[0].means must be|{"options":[{"term":"ok","means":5}]}
+task a: options[0].means must be|{"options":[{"term":"ok","means":"$long_means"}]}
+task a: options[0].next must be|{"options":[{"term":"ok","next":"$long_next"}]}
+BAD
+  [ "$(wc -l < "$(log_of "$home")" | tr -d ' ')" = 1 ] || fail "a bad problem or option wrote the log"
+  pass "a bad problem or option publishes nothing and names the task and field"
+}
+
+test_restore_keeps_problem_and_options_and_the_restored_recap_publishes_no_change() {
+  local home
+  home=$(make_home ask-restore)
+  write_collect "$home" "[$(collected a queued "Task A")]"
+  write_recap "$home" "$(ask_recap)"
+  publish "$home" >/dev/null || fail "the first publish failed"
+  home_run "$home" "$PUBLISH" restore "$home/restored.json" >/dev/null || fail "restore failed"
+  jq -e --arg p "$ASK_PROBLEM" '.tasks.a | .problem == $p and (.options | length) == 2 and .reply_terms == ["go-a", "go-b"]' "$home/restored.json" >/dev/null \
+    || fail "restore dropped the problem or the options: $(cat "$home/restored.json")"
+  cp "$home/restored.json" "$home/recap.json"
+  publish "$home" >/dev/null || fail "publishing the restored recap failed"
+  tail -1 "$(log_of "$home")" | jq -e '.revisions == {}' >/dev/null || fail "the restored recap made a revision"
+  pass "restore keeps the problem and the options, and the restored recap publishes no change"
+}
+
+# The panel of an ask that is held for the captain, with a problem, a summary, and two options.
+ask_panel_home() {  # <name> [extra-json for the revision]
+  local home
+  home=$(make_home "$1")
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg p "$ASK_PROBLEM" --argjson extra "${2:-{\}}" '
+    {held: true, hold_kind: "captain", waiting: true, hold_reason: "Owning home text.", summary: "The finding in one line.",
+     problem: $p, options: $o, reply_terms: ["go-a", "go-b"]} + $extra')")}" > "$(log_of "$home")"
+  printf '%s\n' "$home"
+}
+
+test_the_panel_shows_problem_then_summary_then_each_option_with_its_meaning_and_next_step() {
+  local home board out
+  home=$(ask_panel_home ask-panel)
+  board=$(refresh_board "$home")
+  out=$(render_task "$board" a)
+  # The row shows the summary too, so the order is read from the Problem label on.
+  printf '%s' "$out" | jq -e --arg p "$ASK_PROBLEM" '[.nodes[] | .text] | (index("Problem")) as $at | .[$at:] as $t
+    | [($t | index("Problem")), ($t | index($p)), ($t | index("Finding")), ($t | index("The finding in one line.")), ($t | index("Your call"))]
+    | all(. != null) and . == sort' >/dev/null \
+    || fail "the panel did not show Problem, the summary, then Your call in that order: $(printf '%s' "$out" | all_text)"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-opt__term") | .text] == ["go-a", "go-b"]' >/dev/null \
+    || fail "the call did not list both option terms"
+  printf '%s' "$out" | jq -e '[.nodes[] | .text] | (index("Fix the code; clears the backlog.") != null)
+    and (index("Next: The worker files a ticket, then builds the fix.") != null)
+    and (index("Skip the stuck messages by hand.") != null) and (map(select(startswith("Next: "))) | length == 1)' >/dev/null \
+    || fail "the call did not show each meaning and only the next steps that exist"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}},{"check":{"value":"go-a"}},{"submit":{"question":"a"}}]')
+  printf '%s' "$out" | jq -e '.queued | length == 1 and (.[0].data | .selection == "go-a" and .question == "a")' >/dev/null \
+    || fail "picking an option with a meaning did not queue its term: $(printf '%s' "$out" | jq -c .queued)"
+  pass "the panel shows the problem, the summary, then each option with its meaning and next step"
+}
+
+test_the_hold_reason_is_closed_by_default_and_opens_on_request() {
+  local home board out
+  home=$(ask_panel_home ask-hold-reason)
+  board=$(refresh_board "$home")
+  out=$(render_task "$board" a)
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.text == "Owning home text.") | .hidden] == [true]' >/dev/null \
+    || fail "the hold reason was not shown closed, exactly once: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.text == "Owning home text.")]')"
+  out=$(render "$board" '[{"click":{"attr":"data-task","value":"a"}},{"click":{"text":"Show hold reason"}}]')
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.text == "Owning home text.") | .hidden] == [false]
+    and ([.nodes[] | .text] | index("Hide hold reason") != null)' >/dev/null \
+    || fail "the hold reason did not open on request"
+  pass "the hold reason is closed by default and opens on request"
+}
+
+test_an_ask_that_is_not_held_still_shows_its_call_and_a_task_with_no_ask_shows_none() {
+  local home board out
+  home=$(make_home ask-not-held)
+  entry 1 '["b","c"]' "{
+    \"b\": $(rev b queued "Task B" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg p "$ASK_PROBLEM" '{summary: "Short finding.", problem: $p, options: $o, reply_terms: ["go-a", "go-b"]}')"),
+    \"c\": $(rev c queued "Task C" '{"summary":"No ask here."}')}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render_task "$board" b)
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Your call") != null' >/dev/null \
+    || fail "an ask that is not held lost its call"
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.tag == "form") | .attrs["data-lavish-question"]] | index("b") != null' >/dev/null \
+    || fail "an ask that is not held lost its answer form"
+  printf '%s' "$out" | warn_texts | jq -e 'length == 1 and (.[0] | test("asks but not held")) and (.[0] | test("fm-captain-hold.sh"))' >/dev/null \
+    || fail "an ask that is not held did not carry exactly the held warning: $(printf '%s' "$out" | warn_texts)"
+  render_task "$board" c | jq -e '[.nodes[] | select(.tag == "h3") | .text] | index("Your call") == null' >/dev/null \
+    || fail "a task with no ask and no hold got a call"
+  pass "an ask that is not held still shows its call with a warning, and a task with no ask shows none"
+}
+
+test_the_ask_warnings_flag_each_gap_and_leave_a_complete_ask_alone() {
+  local home board out ok_hold opts_gap
+  home=$(ticket_home ask-warnings "$TICKET_URL_TEMPLATE")
+  ok_hold='"held":true,"hold_kind":"captain","waiting":true'
+  opts_gap='[{"term":"go-a","means":"Does a thing.","next":""},{"term":"go-b","means":"","next":""}]'
+  entry 1 '["noprob","nomean","notheld","nocall","good","doneask","refs","short"]' "{
+    \"noprob\": $(rev noprob queued "Task noprob" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg s "$LONG_SUMMARY" "{$ok_hold, summary: \$s, options: \$o, reply_terms: [\"go-a\", \"go-b\"]}")"),
+    \"nomean\": $(rev nomean queued "Task nomean" "$(jq -c -n --argjson o "$opts_gap" --arg p "$ASK_PROBLEM" --arg s "$LONG_SUMMARY" "{$ok_hold, summary: \$s, problem: \$p, options: \$o, reply_terms: [\"go-a\", \"go-b\"]}")"),
+    \"notheld\": $(rev notheld queued "Task notheld" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg p "$ASK_PROBLEM" --arg s "$LONG_SUMMARY" '{summary: $s, problem: $p, options: $o, reply_terms: ["go-a", "go-b"]}')"),
+    \"nocall\": $(rev nocall queued "Task nocall" "$(jq -c -n --arg s "$LONG_SUMMARY" "{$ok_hold, summary: \$s}")"),
+    \"good\": $(rev good queued "Task good" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg p "$ASK_PROBLEM" "{$ok_hold, summary: \"Three word finding.\", problem: \$p, options: \$o, reply_terms: [\"go-a\", \"go-b\"]}")"),
+    \"doneask\": $(rev doneask "done" "Task doneask" '{"summary":"x","reply_terms":["go"]}'),
+    \"refs\": $(rev refs queued "Task refs" "$(jq -c -n --arg s "$LONG_SUMMARY" "{$ok_hold, summary: \$s, problem: \"See !77 for the cause.\", options: [{term: \"go-a\", means: \"Close !78.\", next: \"\"}], reply_terms: [\"go-a\"]}")"),
+    \"short\": $(rev short queued "Task short" "$(jq -c -n --argjson o "$ASK_OPTIONS" "{$ok_hold, summary: \"Short.\", options: \$o, reply_terms: [\"go-a\", \"go-b\"]}")")}" > "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  render_task "$board" noprob | warn_texts | jq -e 'length == 1 and (.[0] | test("no problem"))' >/dev/null \
+    || fail "an ask with no problem did not carry exactly that warning: $(render_task "$board" noprob | warn_texts)"
+  render_task "$board" nomean | warn_texts | jq -e 'length == 1 and (.[0] | test("option without meaning")) and (.[0] | test("go-b")) and (.[0] | test("go-a") | not)' >/dev/null \
+    || fail "an option with no meaning was not named alone: $(render_task "$board" nomean | warn_texts)"
+  render_task "$board" notheld | warn_texts | jq -e 'length == 1 and (.[0] | test("asks but not held"))' >/dev/null \
+    || fail "an ask that is not held did not carry that warning: $(render_task "$board" notheld | warn_texts)"
+  render_task "$board" nocall | warn_texts | jq -e 'length == 1 and (.[0] | test("held with no call"))' >/dev/null \
+    || fail "a held task with no call did not carry that warning: $(render_task "$board" nocall | warn_texts)"
+  render_task "$board" good | warn_texts | jq -e '. == []' >/dev/null \
+    || fail "a complete ask with a three-word summary got a warning: $(render_task "$board" good | warn_texts)"
+  render_task "$board" doneask | warn_texts | jq -e '. == []' >/dev/null \
+    || fail "a finished ask got a warning"
+  render_task "$board" refs | warn_texts | jq -e 'length == 1 and (.[0] | test("names !77, !78 with no matching link"))' >/dev/null \
+    || fail "a reference in the problem or an option meaning was not checked: $(render_task "$board" refs | warn_texts)"
+  render_task "$board" short | warn_texts | jq -e 'length == 2 and (map(test("short summary")) | any) and (map(test("no problem")) | any)' >/dev/null \
+    || fail "an ask with no problem kept its short summary waiver: $(render_task "$board" short | warn_texts)"
+  out=$(render "$board")
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "fm-badge fm-badge--warn") | .text] | map(select(. != "waiting on you")) | unique
+    == ["asks but not held", "held with no call", "no problem", "option without meaning", "short summary", "unlinked ref"]' >/dev/null \
+    || fail "the rows did not carry the new warnings: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls | test("fm-badge")) | .text]')"
+  pass "the ask warnings flag each gap on the row and the panel and leave a complete ask alone"
+}
+
+test_a_changed_problem_or_option_list_reads_as_text_in_the_history() {
+  local home board out
+  home=$(make_home ask-history)
+  entry 1 '["a"]' "{\"a\": $(rev a queued "Task A")}" > "$(log_of "$home")"
+  entry 2 '["a"]' "{\"a\": $(rev a queued "Task A" "$(jq -c -n --argjson o "$ASK_OPTIONS" --arg p "$ASK_PROBLEM" '{problem: $p, options: $o, reply_terms: ["go-a", "go-b"]}')")}" >> "$(log_of "$home")"
+  board=$(refresh_board "$home")
+  out=$(render_task "$board" a)
+  printf '%s' "$out" | jq -e '[.nodes[] | select(.cls == "rb-change") | .text] | (any(test("^problem: \\(empty\\) -> Synthetic alerts")))
+    and (any(test("^options: \\(empty\\) -> term: go-a, means: Fix the code"))) and (map(select(startswith("problem") or startswith("options")) | select(test("[{}\\[\\]\"]"))) | length == 0)' >/dev/null \
+    || fail "the history did not show the new fields as readable text: $(printf '%s' "$out" | jq -c '[.nodes[] | select(.cls == "rb-change") | .text]')"
+  pass "a changed problem or option list reads as text in the history"
+}
+
 test_rows_show_link_chips_and_the_panel_shows_a_references_section() {
   local home board out
   home=$(make_home links-render)
@@ -2421,6 +2635,15 @@ fm_test_run \
   test_republishing_with_derived_chips_makes_no_new_revision \
   test_text_warnings_flag_each_open_task_and_leave_a_clean_one_alone \
   test_the_ticket_key_warning_uses_the_recap_ticket_setting_only \
+  test_problem_and_options_are_stored_in_one_shape_and_derive_the_reply_terms \
+  test_an_empty_options_list_and_an_empty_problem_clear_them_and_the_terms_they_made \
+  test_a_bad_problem_or_option_publishes_nothing_and_names_the_field \
+  test_restore_keeps_problem_and_options_and_the_restored_recap_publishes_no_change \
+  test_the_panel_shows_problem_then_summary_then_each_option_with_its_meaning_and_next_step \
+  test_the_hold_reason_is_closed_by_default_and_opens_on_request \
+  test_an_ask_that_is_not_held_still_shows_its_call_and_a_task_with_no_ask_shows_none \
+  test_the_ask_warnings_flag_each_gap_and_leave_a_complete_ask_alone \
+  test_a_changed_problem_or_option_list_reads_as_text_in_the_history \
   test_rows_show_link_chips_and_the_panel_shows_a_references_section \
   test_a_task_with_only_one_link_kind_shows_only_that_group \
   test_link_values_are_escaped_and_an_unsafe_url_never_becomes_a_link \

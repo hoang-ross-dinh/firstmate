@@ -96,6 +96,7 @@ For a contribution wake or linked-issue filing, go directly to Contribution foll
 Compose `fm-recap.v1` from the same snapshot with the same ranking judgment as the chat digest.
 Give each task you want to label a one-line `summary`, an `emoji`, a short `theme` code, and the `reply_terms` the captain may answer with.
 Every field is optional and an omitted field keeps its last value.
+For a task that asks the captain, give a `problem` and `options` (a term, what it means, and what happens next) so the panel shows the problem, then the summary, then each option; options replace `reply_terms`, and the board flags an ask that lacks them or whose task is not held.
 Set `on_hold` to a short event text, such as the first review feedback from an outside reviewer, for a task the captain put on hold while it waits for something outside the fleet, and to an empty string once that event arrives; the board badges it "On Hold" apart from in-flight and blocked work.
 Add `links` (ticket and merge request entries with a code, an http(s) url, and optional text) so the board shows them as chips and in the task detail; the publish header owns the field shape.
 Keep the recap data at the default path `bin/fm-recap-publish.sh recap-path` prints, never under a temp directory; `restore` in the same command rebuilds a lost file from the iteration log.
