@@ -1483,6 +1483,17 @@ The value is recorded in the task record as `autocompact_window=` only when the 
 A relaunch refuses the flag, like the other recorded launch values, and one that switches to a non-Claude harness drops the recorded value.
 A window that came from the config file is never recorded, so editing the file still reaches the next relaunch.
 
+## Claude conversation continuity (`claude_session`)
+
+`bin/fm-spawn.sh` gives every Claude ship and scout launch its own `--session-id <uuid>` and records the id as `claude_session=<uuid>` in the task record, so a crashed worker's conversation can be found again.
+A relaunch whose previous harness was Claude passes `--resume <uuid>` instead when the record holds a well-formed id and a transcript named `<uuid>.jsonl` still exists under `projects/` of the Claude config root the replacement uses (the pinned worker account's root, else `CLAUDE_CONFIG_DIR`, else `~/.claude`).
+The resumed conversation keeps its id, so the record is unchanged, and the relaunch note still reaches the worker through its instructions.
+
+Otherwise the relaunch starts a fresh conversation exactly as before, records a new id, and prints one `notice:` line on stderr saying the previous conversation could not be resumed (the record held no id, or its transcript was not found).
+A relaunch that switches onto Claude from another harness has no Claude conversation to resume and prints no notice.
+When no UUID generator is available the launch passes no id and records none, and the next relaunch takes the fresh path.
+Secondmates, raw launch commands, and every other harness are unchanged and record no `claude_session`.
+
 ## Worker tool exclusions (config/crew-exclude-tools)
 
 The optional local, gitignored `config/crew-exclude-tools` hides named tools from this home's ship and scout workers, for example to keep an MCP server's write tools out of reach while its read tools stay available.

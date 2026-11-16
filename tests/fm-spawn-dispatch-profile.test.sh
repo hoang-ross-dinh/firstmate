@@ -2446,12 +2446,16 @@ claude_worker_add_dirs() {  # <home> <id>
 }
 
 claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
-  local doorbell quoted
+  local doorbell quoted session
+  # The launch carries a fresh --session-id; its value is random, so read it back
+  # and let the shape check fail the comparison if it is not a UUID.
+  session=$(printf '%s' "$1" | sed -n 's/.* --session-id \([0-9a-f-]*\) .*/\1/p')
+  [[ "$session" =~ ^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$ ]] || session="not a session id"
   doorbell=$(claude_launch_brief_arg "$1")
   [ "$(printf '%s' "$doorbell" | "$ROOT/bin/fm-operational-input.sh" doorbell-kind)" = launch-brief ] \
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
-  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(fm_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(fm_test_launch_git_prefix "$1")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' --session-id $session $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
 test_claude_permission_mode_absent_defaults_to_bypass() {
@@ -2601,7 +2605,8 @@ test_claude_crew_autocompact_window_reaches_workers_only() {
   assert_contains "$launch" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 " "crewmate launch lacks the window variable"
   # The trailing doorbell names a per-spawn record path, so compare everything before the worker prompt.
   # The Git config env file is named by a per-spawn generation stamp, so mask that stamp too.
-  local per_spawn='s/ --append-system-prompt.*//; s/git-config\.s[0-9]*\.[0-9]*\.[0-9]*\.sh/git-config.GEN.sh/g'
+  # The random --session-id is per spawn as well.
+  local per_spawn='s/ --append-system-prompt.*//; s/ --session-id [0-9a-f-]*//; s/git-config\.s[0-9]*\.[0-9]*\.[0-9]*\.sh/git-config.GEN.sh/g'
   [ "$(printf '%s' "${launch/CLAUDE_CODE_AUTO_COMPACT_WINDOW=350000 /}" | sed "$per_spawn")" = "$(printf '%s' "$baseline" | sed "$per_spawn")" ] \
     || fail "the variable must be the only difference from the absent-file launch"
 

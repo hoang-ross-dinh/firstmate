@@ -96,7 +96,8 @@
 #              it continues the same agent rather than a fresh one
 #              (fm_control_backend_relaunch_supported).
 #              --note is required for a ship or scout, whose replacement
-#              inherits the local copy but none of the conversation; a
+#              inherits the local copy but, unless fm-spawn resumes a Claude
+#              worker's recorded conversation, none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,

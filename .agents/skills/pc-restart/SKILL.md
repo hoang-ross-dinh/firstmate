@@ -11,8 +11,8 @@ metadata:
 A restart closes every worker terminal window and session process, and it can clear the host's scratch directories.
 Durable records in the home and commits on branches survive.
 Conversations, uncommitted edits, and anything kept only in a scratch directory do not.
-A relaunch cannot resume a worker conversation.
-`bin/fm-control.sh <id> relaunch` starts a new agent from the instructions on disk plus a progress note ([transactional relaunch](../../../docs/agent-control.md#transactional-relaunch)).
+A relaunch resumes a Claude worker's conversation only while its recorded transcript exists, and every other worker restarts from the instructions on disk.
+`bin/fm-control.sh <id> relaunch` starts the replacement from the instructions on disk plus a progress note ([transactional relaunch](../../../docs/agent-control.md#transactional-relaunch)).
 
 ## Part A - before the restart: can I restart now?
 

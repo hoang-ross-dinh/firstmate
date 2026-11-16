@@ -500,6 +500,15 @@
 #   as autocompact_window= in state/<id>.meta, so --relaunch replays it (the
 #   flag itself is refused on a relaunch) and a relaunch onto another harness
 #   drops it. A window taken from the file is never recorded.
+# Claude conversation continuity:
+#   Every claude ship and scout launch is given its own --session-id and records
+#   it as claude_session= in state/<id>.meta. A relaunch of a claude worker that
+#   was last running claude passes --resume <id> when that id's transcript still
+#   exists under the launch's Claude config root, so the replacement keeps the
+#   crashed worker's context. When the id is absent or the transcript is gone, the
+#   relaunch starts a fresh conversation, records its new id, and prints one
+#   notice line on stderr saying the conversation could not be resumed. Every
+#   other harness, a secondmate, and a raw launch command are unchanged.
 # Worker tool exclusions:
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
@@ -550,6 +559,9 @@
 #                  reports (relaunch_resume_args below owns it; it supplies its
 #                  own leading space, and is empty on every fresh spawn and for
 #                  every other harness)
+#     __CLAUDESESSION__ the claude `--session-id <uuid> ` (fresh) or `--resume <id> `
+#                  (relaunch with a surviving transcript) flag; empty for a secondmate
+#                  and when no id could be generated
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi busy-state extension,
@@ -2894,7 +2906,7 @@ launch_template() {
   # project and fetched content. A persistent secondmate receives its own
   # supervisor contract instead, so this task-worker statement does not apply.
   claude)
-    printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __CLAUDEPERMFLAG__ __CLAUDEADDDIRS__--settings __CLAUDESETTINGS__ '
+    printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __CLAUDEPERMFLAG__ __CLAUDEADDDIRS__--settings __CLAUDESETTINGS__ __CLAUDESESSION__'
     if [ "$kind" != secondmate ]; then
       printf '%s' "--append-system-prompt '$(spawn_claude_task_channel_statement)' "
     fi
@@ -7200,6 +7212,46 @@ else
   fi
 fi
 
+# Claude conversation continuity (header above). Decided before the task record
+# is written because the record names the id the launch below passes.
+# claude_transcript_exists: the Claude config root this launch uses is the one its
+# worker reads, so a pin change between launch and relaunch reads as "gone" and
+# falls back to a fresh conversation instead of a failed --resume. The id is a
+# UUID and unique across project directories, so the lookup does not depend on
+# how Claude encodes the worktree path into its project directory name.
+claude_transcript_exists() {  # <session-id>
+  local root
+  if [ -n "$WORKER_ACCOUNT" ]; then
+    root=${WORKER_ACCOUNT_ROOT:-$HOME/.claude}
+  else
+    root=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+  fi
+  [ -n "$(find "$root/projects" -maxdepth 2 -name "$1.jsonl" -print -quit 2>/dev/null)" ]
+}
+CLAUDE_SESSION=
+CLAUDE_SESSION_FLAG=
+if [ "$HARNESS" = claude ] && [ "$KIND" != secondmate ] && [ "$RAW_LAUNCH" = 0 ]; then
+  CLAUDE_SESSION_PRIOR=
+  if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_PRIOR_HARNESS" = claude ]; then
+    CLAUDE_SESSION_PRIOR=$(fm_meta_get "$RELAUNCH_META" claude_session)
+  fi
+  if [[ "$CLAUDE_SESSION_PRIOR" =~ ^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$ ]] \
+    && claude_transcript_exists "$CLAUDE_SESSION_PRIOR"; then
+    CLAUDE_SESSION=$CLAUDE_SESSION_PRIOR
+    CLAUDE_SESSION_FLAG="--resume $CLAUDE_SESSION "
+  else
+    # uuidgen is absent on some minimal hosts; launching without an id only costs
+    # a later relaunch its resume, so it must never refuse the spawn.
+    CLAUDE_SESSION=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    [ -z "$CLAUDE_SESSION" ] || CLAUDE_SESSION_FLAG="--session-id $CLAUDE_SESSION "
+    if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_PRIOR_HARNESS" = claude ]; then
+      CLAUDE_SESSION_WHY="no session id recorded"
+      [ -z "$CLAUDE_SESSION_PRIOR" ] || CLAUDE_SESSION_WHY="its transcript was not found"
+      echo "notice: could not resume $ID's previous Claude conversation ($CLAUDE_SESSION_WHY); started a fresh conversation" >&2
+    fi
+  fi
+fi
+
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 [ "$BACKEND" = t3code ] && META_WINDOW=$W
@@ -7220,7 +7272,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile autocompact_window busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile autocompact_window claude_session busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7266,6 +7318,9 @@ preserve_relaunch_meta() {
   # Only a per-spawn flag value is recorded, so a relaunch replays it while a
   # config-file window keeps being re-read and every other record stays byte-identical.
   [ -z "$AUTOCOMPACT_RECORD" ] || echo "autocompact_window=$AUTOCOMPACT_RECORD"
+  # Read by a later relaunch to resume this conversation; written only for a
+  # claude ship or scout so every other task record stays byte-identical.
+  [ -z "$CLAUDE_SESSION" ] || echo "claude_session=$CLAUDE_SESSION"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -7447,6 +7502,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
+LAUNCH=${LAUNCH//__CLAUDESESSION__/$CLAUDE_SESSION_FLAG}
 case "$LAUNCH" in
 *__CLAUDESETTINGS__*)
   if [ "$KIND" = secondmate ]; then

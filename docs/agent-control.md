@@ -69,6 +69,7 @@ It is not deterministic across the verified adapters: codex, grok, gemini, devin
 `relaunch` uses the brief on disk - not a harness-private session - as the durable instruction when the backend can prove the old agent stopped and the composer is empty; Devin on Herdr currently fails that composer check and refuses.
 T3 Code cannot host a fresh replacement agent in a thread, so `relaunch` refuses before stopping anything.
 A relaunch does take one session reference when the endpoint's own runtime recorded it - see [the relaunch transaction](#transactional-relaunch) - but that is a relaunch input, not a caller-facing verb.
+A Claude ship or scout relaunch likewise resumes the conversation id its launch recorded in `claude_session=` when that transcript still exists, and otherwise starts fresh with a one-line notice ([the task record field](configuration.md#claude-conversation-continuity-claude_session)).
 
 ## Transactional relaunch
 
@@ -88,7 +89,7 @@ A relaunch does take one session reference when the endpoint's own runtime recor
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
    A secondmate's own crewmates run in their own endpoints and outlive its relaunch; the relaunched secondmate reconciles them from its home's durable records at startup.
 3. **Record the note.**
-   A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
+   A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but, except for a resumed Claude conversation, none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
 4. **Stop the old agent** through the `exit` verb, with its postcondition.
 5. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which reuses the recorded worktree instead of creating one, adopts the recorded endpoint when it still exists, clears the previous harness's per-task wiring, and arms a fresh busy generation.
